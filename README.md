@@ -1,91 +1,110 @@
-# Dinga AI — Tutor de Idiomas com Skills, RAG e MTG-IA
+# Dinga AI — Tutor Inteligente de Inglês Técnico e Cotidiano
 
-MVP em **Java 25 + Spring Boot 4** construído para a entrega da Etapa 4 do projeto **Educação de Idiomas** (Caso 3 — *Educação personalizada com IA na plataforma Microsoft Learn*).
-
-- **Documentação completa em `AiContext/`:**
-  - [Contexto do Projeto (`contexto.md`)](AiContext/contexto.md) — visão holística, problema social, histórico DreamShaper, 5 Skills, base RAG curada, MTG-IA, ODS 4/10/16 e análise crítica.
-  - [Arquitetura Técnica (`arquitetura.md`)](AiContext/arquitetura.md) — stack Java 25 + Spring Boot 4.1.1, diagrama de fluxo em 5 etapas, estrutura de pacotes, fórmula BM25, cliente LLM híbrido e contratos REST.
-  - [Extração DreamShaper (`DREAMSHAPER.md`)](AiContext/DREAMSHAPER.md) — registro integral da trilha acadêmica e entregas anteriores.
-  - [Apresentação de Slides (`slides/`)](AiContext/slides/APRESENTACAO_SLIDES.md) — deck interativo 16:9 (`/slides`), PDF e roteiro de apresentação.
-
-## O que o protótipo demonstra na prática
-
-- **5 Skills Modulares (`SkillRouter`):**
-  1. **Diagnóstico & Trilha (`diagnostico-perfil`):** nivelamento A1–B2 e roteiro sem criar bolhas de aprendizado.
-  2. **Tutor Socrático (`tutor-socratico`):** explica o porquê da gramática/vocabulário sem dar cola pronta.
-  3. **Inglês Técnico & Learn (`ingles-tecnico`):** destrava termos de IA, Cloud, APIs, Git e Microsoft Learn com analogias acessíveis.
-  4. **Prática Ativa & Correção (`pratica-ativa`):** feedback construtivo em frases de *daily*, entrevista e escrita.
-  5. **Guardião Ético MTG-IA (`guardiao-etico-mtg`):** explica governança ética, LGPD, EU AI Act, UNESCO e ODS 4, 10 e 16.
-- **Mini-Teste de Nivelamento CEFR (4 questões rápidas):** botão discreto *"Descobrir meu nível"* (`A1 → B2`) que define automaticamente o nível CEFR do estudante e recomenda a primeira trilha de estudo.
-- **Streaming de Resposta no Chat (SSE — `/api/chat/stream`):** exibe a resposta do **Gemini 3.8 Flash** progressivamente via *Server-Sent Events*, com fallback transparente e rápido no modo **RAG Local**.
-- **Simulador Guiado Multi-Turno (`/api/simulator/*`):** prática estruturada de **Daily Standup** (3 etapas) e **Entrevista Técnica** (4 etapas) com avaliação por turno (Clareza, Gramática, Vocabulário Técnico) e mini-boletim final.
-- **Quiz Adaptativo & Gerador Sob Demanda (`/api/quiz/*`):** banco curado + geração de novas questões ancoradas no RAG via **Gemini 3.8 Flash** (com fallback determinístico local).
-- **Caderno de Vocabulário com Flashcards SRS:** sistema de repetição espaçada (4 *boxes* Leitner) no navegador, **busca rápida** instantânea por termo e **exportação Anki (`.csv`)**.
-- **Motor RAG real em Java puro (`Bm25RagRetriever`) + Painel Docente:** carrega 10 documentos curados, suporta cadastro manual e **upload de arquivos `.md`/`.txt`** (`/api/knowledge/upload`) indexados ao vivo no BM25 com persistência local em JSON.
-- **Modo Híbrido com Cache LLM (`HybridLlmClient`):**
-  - **Sem chave de API:** roda imediatamente em **RAG Local (Modo Baixa Conectividade)** — custo zero e sem limite de cota.
-  - **Com chave opcional (`GEMINI_API_KEY` com padrão `gemini-3.8-flash`, `GROQ_API_KEY`, `OPENAI_API_KEY` ou `OLLAMA_URL`):** gera respostas conversacionais ancoradas no RAG, usa **cache leve LRU + TTL** para evitar chamadas duplicadas idênticas na mesma sessão e cai automaticamente para o modo local se a cota acabar.
-- **TTS Híbrido + Acessibilidade + Atalhos:** leitura em voz alta híbrida (`/api/tts` online + `eSpeak-NG` offline + fallback `Web Speech API`, velocidade `1.0x`/`0.75x`), **Modo Leve**, **Alto Contraste**, ajuste de fonte (`A- / A+`), atalhos de teclado (`1`–`4` no Quiz, `Espaço` no Flashcard, `Esc` para áudio, `Ctrl+K` para focar chat), limpeza LGPD e **Boletim Completo da Sessão** (`.md` e versão imprimível 100% lado do cliente).
-- **Governança MTG-IA, Segurança e Observabilidade:** guardrails ativos de **LGPD** (mascaramento automático de CPF, e-mail e telefone) e **Anti-Plágio**, `watermarkId` único por resposta, canal de auditoria (`/api/feedback`), **Métricas da Sessão** (`/api/metrics`), **Rate Limiting endurecido** (eviction automática no `ConcurrentHashMap` + validação segura de `X-Forwarded-For`) e documentação interativa **OpenAPI / Swagger UI** (`/swagger-ui.html`).
-- **Qualidade Verificada:** **38 testes automatizados** (`JUnit 5` + `SpringBootTest` + `MockMvc` em `DingaAiTests` e `DingaBoostImprovementsTests`).
+**Dinga AI** é uma plataforma web de ensino personalizado de inglês — construída em **Java 25** e **Spring Boot 4** — projetada para ajudar estudantes e profissionais de língua portuguesa a vencer a barreira do idioma no estudo de tecnologia, leitura de documentação técnica e comunicação profissional.
 
 ---
 
-## Como rodar localmente
+## Propósito e Intuito do Projeto
+
+Aprender inglês voltado para tecnologia e carreira costuma esbarrar em três problemas recorrentes:
+
+1. **Barreira de acesso e conectividade:** soluções tradicionais dependem de assinaturas caras ou conexões estáveis em tempo integral.
+2. **IA genérica e pouco pedagógica:** chatbots comuns frequentemente entregam respostas prontas (desestimulando o raciocínio), misturam níveis de dificuldade ou alucinam regras e termos técnicos.
+3. **Falta de contexto real:** cursos genéricos raramente trabalham situações reais do dia a dia de quem estuda e trabalha com software — como ler documentação técnica, interpretar logs/erros, participar de uma *Daily Standup* ou fazer *Code Review*.
+
+O intuito da **Dinga AI** é oferecer um **tutor socrático, transparente e acessível** que:
+- **Ensina com autonomia:** explica o *porquê* da gramática e do vocabulário, corrige erros típicos de brasileiros (*falsos cognatos*, tempos verbais, estruturas literais) e propõe micro-desafios práticos em vez de dar respostas prontas.
+- **Ancora respostas em conhecimento curado:** utiliza **RAG Híbrido** para fundamentar explicações em uma base didática verificável, reduzindo alucinações e exibindo sempre as fontes consultadas.
+- **Funciona com ou sem chave de API:** integra-se ao **Gemini 3.8 Flash** (além de Groq, OpenAI-compatível e Ollama) com streaming em tempo real, mas mantém um modo **100% local/offline** com baixa latência e consumo reduzido de dados.
+- **Respeita privacidade e transparência por design:** aplica proteção ativa contra dados pessoais (LGPD) na entrada e na saída, calcula índice de ancoragem (*Groundedness*) em cada resposta e mantém o progresso do estudante exclusivamente no navegador.
+
+---
+
+## Principais Funcionalidades
+
+### Tutoria Personalizada e Coesão de IA
+- **5 Skills Pedagógicas Especializadas (`SkillRouter`):**
+  1. **Diagnóstico & Trilha (`diagnostico-perfil`):** orienta a jornada do iniciante ao avançado (`A1` → `B2`) sem criar bolhas de aprendizado.
+  2. **Tutor Socrático (`tutor-socratico`):** conduz o raciocínio com exemplos contrastivos (`❌ Evite → ✅ Prefira`) e perguntas guiadas.
+  3. **Inglês Técnico (`ingles-tecnico`):** destrava vocabulário de IA, Cloud, APIs, Git, logs/stack traces e documentação técnica.
+  4. **Prática Ativa (`pratica-ativa`):** corrige frases de *Daily Standup*, entrevistas e escrita, detectando armadilhas comuns de falantes de português.
+  5. **Guardião Ético & Governança (`guardiao-etico-mtg`):** responde sobre uso responsável de IA, privacidade, transparência e boas práticas.
+- **Coesão Multi-turno com Gemini 3.8 Flash:**
+  - **Memória Pedagógica (`LearnerState`):** acompanha pontos a reforçar e tópicos dominados ao longo da sessão (salvo localmente no navegador) para conectar explicações entre turnos.
+  - ***Few-Shot Prompting* calibrado por Skill e CEFR (`A1`–`B2`)** e **decodificação dinâmica** (`temperature` e `topP` ajustados por especialidade).
+  - ***Conversation Stickiness*:** mantém continuidade de contexto em perguntas de acompanhamento sem trocar de persona abruptamente.
+  - **Streaming progressivo (SSE — `/api/chat/stream`):** exibe respostas em tempo real com cache leve (LRU + TTL) e fallback transparente para o modo local.
+
+### Motor RAG Híbrido em Java Puro
+- **Base Curada de 15 Documentos (`91` chunks indexados):** cobre níveis `A1` a `B2`, falsos cognatos, *phrasal verbs* de tecnologia, leitura de documentação, *debugging*/logs, *prompt engineering*, *code review*, pronúncia e ética em IA — todos com `tags:` bilíngues e contrastes práticos.
+- **Busca Híbrida (BM25 + Embeddings Vetoriais com RRF):** combina **Okapi BM25 bilíngue** (expansão de sinônimos PT↔EN, *stemming*, *fuzzy matching* Damerau-Levenshtein para erros de digitação, expansão contextual multi-turno e diversidade de fontes) com **Embeddings Gemini** em cache local (`data/embeddings-cache.json`) fundidos via **Reciprocal Rank Fusion (RRF)**.
+- **Baixa Latência:** *fast-path* local no BM25 para consultas de alta confiança, pré-aquecimento assíncrono de embeddings em background e chunking inteligente com *overlap*.
+- **Curadoria Docente ao Vivo:** permite cadastrar novos conteúdos ou importar arquivos `.md` e `.txt` (`/api/knowledge/upload`), indexados imediatamente no motor RAG.
+
+### Prática Interativa, Áudio e Acessibilidade
+- **Mini-Teste de Nivelamento CEFR:** avaliação rápida em 4 perguntas (`A1` → `B2`) que define o nível inicial e sugere o primeiro foco de estudo.
+- **Simulador Guiado Multi-Turno (`/api/simulator/*`):** simula **Daily Standup** (3 etapas) e **Entrevista Técnica** (4 etapas) usando *Structured Outputs* (JSON Schema), com feedback por resposta e boletim final.
+- **Quiz Adaptativo Sob Demanda (`/api/quiz/*`):** banco curado + geração de questões inéditas ancoradas no RAG com Gemini 3.8 Flash e fallback determinístico local.
+- **Caderno de Vocabulário / Flashcards SRS:** revisão espaçada (4 caixas Leitner), busca instantânea e exportação em `.csv` compatível com **Anki**.
+- **TTS Híbrido (`/api/tts`):** síntese de pronúncia em `en-US` e `pt-BR` com velocidade ajustável (`1.0x` / `0.75x`), alternando automaticamente entre áudio natural online e **`eSpeak-NG` offline** (com fallback para `Web Speech API`).
+- **Interface Minimalista e Acessível:** Modo Leve (economia de banda), Alto Contraste, ajuste de fonte (`A- / A+`), atalhos de teclado (`Ctrl+K`, `1`–`4`, `Espaço`, `Esc`), limpeza completa de dados locais e exportação do **Boletim da Sessão** (`.md` e versão imprimível).
+
+### Governança, Segurança e Qualidade
+- **Privacidade e Guardrails Ativos:** mascaramento automático de CPF, e-mail e telefone na entrada **e na saída** (inclusive durante streaming SSE via buffer sanitizador) e redirecionamento socrático anti-plágio.
+- **Verificação Pós-Geração (`GroundednessVerifier`):** calcula o índice de ancoragem (`groundednessScore`) da resposta frente aos trechos RAG recuperados sem adicionar latência.
+- **Observabilidade e Proteção de API:** `watermarkId` por resposta, canal de auditoria (`/api/feedback`), métricas da sessão (`/api/metrics`), *Rate Limiting* com *eviction* automática e validação estrita de IP, respostas de erro padronizadas (`@RestControllerAdvice`) e **OpenAPI / Swagger UI** (`/swagger-ui.html`).
+- **58 testes automatizados** (`JUnit 5`, `SpringBootTest` e `MockMvc`), incluindo benchmark de qualidade do RAG (`Recall@3 >= 0.95` e `MRR >= 0.85`).
+
+---
+
+## Stack Tecnológica
+
+- **Backend:** Java 25, Spring Boot 4.1.1, Spring WebMVC, SpringDoc OpenAPI 3
+- **IA & Recuperação:** Okapi BM25 + Embeddings Vetoriais (RRF) em Java puro, cliente HTTP nativo (`java.net.http.HttpClient`) para Gemini (`gemini-3.8-flash`), Groq, OpenAI-compatível e Ollama
+- **Frontend:** HTML5, CSS3 e JavaScript vanilla (zero dependências externas de build)
+- **Persistência Leve:** arquivos JSON locais em `data/` (curadoria docente, quiz gerado, auditoria e cache de embeddings) e `localStorage` no navegador
+
+---
+
+## Como Executar Localmente
 
 ### Pré-requisitos
-- **JDK 25** (nesta máquina, o JDK completo está em `~/.jdks/temurin-25.0.4.1`, pois `/bin/java` tem apenas JRE).
-- O projeto já inclui o Maven Wrapper (`mvnw`).
+- **JDK 25** instalado (`JAVA_HOME` apontando para um JDK completo).
+- Maven Wrapper incluso (`./mvnw`).
+- *(Opcional)* `espeak-ng` instalado no sistema para fallback de síntese de voz 100% offline.
 
-### Modo padrão (Sem API Key — RAG Local)
+### 1. Modo Padrão (Offline / RAG Local — sem API Key)
 
 ```bash
-export JAVA_HOME="$HOME/.jdks/temurin-25.0.4.1"
-export PATH="$JAVA_HOME/bin:$PATH"
 ./mvnw spring-boot:run
 ```
 
-Depois acesse no navegador: **http://localhost:8080**
+Acesse:
+- Aplicação web: **http://localhost:8080**
+- Documentação interativa da API (Swagger UI): **http://localhost:8080/swagger-ui.html**
 
-*(No IntelliJ IDEA, basta abrir o projeto pelo `pom.xml`, confirmar o SDK `temurin-25.0.4.1` e executar `DingaAiApplication`.)*
-
-### Modo Generativo opcional (com chave gratuita Gemini ou Groq)
+### 2. Modo Híbrido com LLM Generativo (Opcional)
 
 ```bash
-export JAVA_HOME="$HOME/.jdks/temurin-25.0.4.1"
-export PATH="$JAVA_HOME/bin:$PATH"
 export GEMINI_API_KEY="sua-chave-aqui"
+# Opcional: export GEMINI_MODEL="gemini-3.8-flash"
 ./mvnw spring-boot:run
 ```
 
-Ou usando Groq (`GROQ_API_KEY`), OpenAI-compatível (`OPENAI_API_KEY`), ou Ollama local (`OLLAMA_URL=http://localhost:11434`).
+Também suporta outros provedores via variáveis de ambiente:
+- **Groq:** `GROQ_API_KEY` (padrão `llama-3.1-8b-instant`)
+- **OpenAI-compatível:** `OPENAI_API_KEY` + `OPENAI_BASE_URL` + `OPENAI_MODEL`
+- **Ollama local:** `OLLAMA_URL=http://localhost:11434` + `OLLAMA_MODEL`
 
-### Executar os testes
+### 3. Executar a Suíte de Testes (58 testes)
 
 ```bash
-JAVA_HOME="$HOME/.jdks/temurin-25.0.4.1" PATH="$HOME/.jdks/temurin-25.0.4.1/bin:$PATH" ./mvnw test
+./mvnw test
 ```
 
----
+### 4. Executar via Docker
 
-## Deploy gratuito via Docker (Render / Railway)
-
-O projeto já inclui [Dockerfile](Dockerfile) pronto para nuvem (porta configurável via variável `PORT`):
-
-1. Suba esta pasta para um repositório no GitHub.
-2. No **Render** (Web Service → Environment: **Docker**), conecte o repositório.
-3. *(Opcional)* Adicione `GEMINI_API_KEY` ou `GROQ_API_KEY` nas variáveis de ambiente — sem ela, o app funciona normalmente em **RAG Local**.
-4. Use o link público gerado para anexar na etapa **Entrega** do DreamShaper.
-
----
-
-## Roteiro rápido de apresentação (3–5 minutos)
-
-1. **Abertura (30s):** mostrar o problema do Caso 3 (barreira do inglês na área de tecnologia + riscos de alucinação e exclusão digital) e o nome **Dinga AI**.
-2. **Demo ao vivo (2 min):**
-   - Clicar em um prompt rápido de **Inglês Técnico** (*grounding/RAG no Microsoft Learn*) e expandir **"Fontes curadas consultadas (RAG)"** para mostrar o BM25 citando a fonte exata.
-   - Clicar no prompt de **Prática Ativa** (*daily standup / idade em inglês*) para mostrar correção pedagógica + botão **Ouvir resposta**.
-   - Ativar **Modo Leve** e **Alto Contraste** no topo para provar acessibilidade em dispositivos simples / baixa conexão.
-3. **Governança MTG-IA & ODS (1 min):**
-   - Mostrar o `watermarkId`, clicar em **"Reportar erro/viés"** e abrir a aba **"Skills & Base Curada"** exibindo o registro de auditoria.
-   - Abrir a aba **"Arquitetura, ODS & Crítica"** para apresentar o diagrama, ODS 4/10/16 e a análise crítica honesta das limitações.
+```bash
+docker build -t dinga-ai .
+docker run -p 8080:8080 -e GEMINI_API_KEY="sua-chave-opcional" dinga-ai
+```
