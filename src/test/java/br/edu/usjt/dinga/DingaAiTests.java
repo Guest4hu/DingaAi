@@ -79,8 +79,8 @@ class DingaAiTests {
 
     @Test
     void knowledgeBaseLoadsAllCuratedDocuments() {
-        assertEquals(10, knowledgeLoader.getDocumentsSummary().size());
-        assertTrue(knowledgeLoader.getChunks().size() >= 18);
+        assertEquals(15, knowledgeLoader.getDocumentsSummary().size());
+        assertTrue(knowledgeLoader.getChunks().size() >= 35);
     }
 
     @Test
@@ -319,7 +319,7 @@ class DingaAiTests {
                     "Vocabulário de Prompt Flow e Guardrails",
                     "No Azure AI Studio, Prompt Flow orquestra chamadas de LLM com RAG e Guardrails filtram riscos éticos. \"We use Prompt Flow and Guardrails in Azure AI.\""
             ));
-            assertEquals(11, createdMap.get("totalDocuments"));
+            assertEquals(16, createdMap.get("totalDocuments"));
 
             ChatResponse chatRes = tutorService.chat(new ChatRequest(
                     "O que são Prompt Flow e Guardrails no Azure AI Studio?",
@@ -329,12 +329,12 @@ class DingaAiTests {
                     false
             ));
             assertFalse(chatRes.retrievedSources().isEmpty());
-            assertTrue(chatRes.retrievedSources().stream().anyMatch(c -> c.docId().startsWith("11-docente-")));
+            assertTrue(chatRes.retrievedSources().stream().anyMatch(c -> c.docId().startsWith("16-docente-")));
         } finally {
             knowledgeLoader.resetCustomDocuments();
             ragRetriever.refreshIndex();
         }
-        assertEquals(10, knowledgeLoader.getDocumentsSummary().size());
+        assertEquals(15, knowledgeLoader.getDocumentsSummary().size());
     }
 
     @Test
@@ -656,7 +656,7 @@ class DingaAiTests {
         QuizService quiz2 = new QuizService(loader2, retriever2, hybridLlmClient, objectMapper, store);
         FeedbackReportService feedback2 = new FeedbackReportService(store);
 
-        assertEquals(11, loader2.getDocumentsSummary().size());
+        assertEquals(16, loader2.getDocumentsSummary().size());
         assertTrue(loader2.getDocumentsSummary().stream().anyMatch(d -> d.docId().equals(createdDoc.docId())));
         assertTrue(quiz2.findById(genQuestionId).isPresent());
         assertTrue(feedback2.listAll().stream().anyMatch(r -> r.id().equals(report.id())));
@@ -670,7 +670,7 @@ class DingaAiTests {
         QuizService quiz3 = new QuizService(loader3, new Bm25RagRetriever(loader3), hybridLlmClient, objectMapper, store);
         FeedbackReportService feedback3 = new FeedbackReportService(store);
 
-        assertEquals(10, loader3.getDocumentsSummary().size());
+        assertEquals(15, loader3.getDocumentsSummary().size());
         assertTrue(quiz3.findById(genQuestionId).isEmpty());
         assertTrue(feedback3.listAll().isEmpty());
 

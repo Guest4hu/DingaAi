@@ -266,7 +266,7 @@ class DingaBoostImprovementsTests {
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.document.title").value("Kubernetes & Containers Vocab"))
                     .andExpect(jsonPath("$.document.chunkCount").value(2))
-                    .andExpect(jsonPath("$.totalDocuments").value(11));
+                    .andExpect(jsonPath("$.totalDocuments").value(16));
 
             var hits = ragRetriever.retrieve("liveness probe container kubernetes", "B2", 3);
             assertFalse(hits.isEmpty());
