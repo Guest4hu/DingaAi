@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dinga AI — Tutor de Inglês</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Ir para o conteúdo principal</a>
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">D</div>
+      <div class="brand-title-row">
+        <h1>Dinga AI</h1>
+        <span id="mode-pill" class="pill pill-mode" title="Modo de execução atual">Carregando...</span>
+        <span id="telemetry-pill" class="pill pill-telemetry" title="Latência e consumo da sessão">-- ms · 0.00 KB</span>
+      </div>
+    </div>
+
+    <div class="a11y-bar" role="toolbar" aria-label="Controles de acessibilidade e privacidade">
+      <button id="stop-audio-btn" class="btn-chip btn-audio-active" type="button" hidden title="Parar leitura em voz alta">
+        Parar áudio
+      </button>
+      <button id="toggle-audio-speed" class="btn-chip" type="button" aria-pressed="false" title="Alternar velocidade de pronúncia (1.0x / 0.75x)">
+        1.0x
+      </button>
+      <button id="toggle-low-data" class="btn-chip" type="button" aria-pressed="false" title="Economia de dados">
+        Modo Leve
+      </button>
+      <button id="toggle-contrast" class="btn-chip" type="button" aria-pressed="false" title="Alto contraste">
+        Contraste
+      </button>
+      <button id="font-dec" class="btn-chip" type="button" aria-label="Diminuir fonte">A-</button>
+      <button id="font-inc" class="btn-chip" type="button" aria-label="Aumentar fonte">A+</button>
+      <button id="clear-history" class="btn-chip btn-danger-outline" type="button" title="LGPD: apagar histórico e progresso local">
+        Limpar
+      </button>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist" aria-label="Seções">
+    <button class="tab-btn active" type="button" role="tab" aria-selected="true" data-tab="tutor">
+      Tutor IA
+    </button>
+    <button class="tab-btn" type="button" role="tab" aria-selected="false" data-tab="simulator">
+      Simulador
+    </button>
+    <button class="tab-btn" type="button" role="tab" aria-selected="false" data-tab="quiz">
+      Quiz (<span id="tab-quiz-count">8</span>)
+    </button>
+    <button class="tab-btn" type="button" role="tab" aria-selected="false" data-tab="vocab">
+      Vocabulário (<span id="tab-vocab-count">0</span>)
+    </button>
+    <button class="tab-btn" type="button" role="tab" aria-selected="false" data-tab="skills">
+      Base RAG &amp; Skills
+    </button>
+    <button class="tab-btn" type="button" role="tab" aria-selected="false" data-tab="architecture">
+      Governança
+    </button>
+  </nav>
+
+  <main id="main-content" class="container">
+    <!-- TAB 1: TUTOR IA -->
+    <section id="tab-tutor" class="tab-panel active" role="tabpanel">
+      <div class="tutor-layout">
+        <aside class="sidebar-card" aria-label="Configurações do Estudante">
+          <div class="sidebar-section-head">
+            <h2>Seu Perfil</h2>
+            <span id="active-level-badge" class="pill">Nível A2</span>
+          </div>
+
+          <div class="level-quick-pills" role="group" aria-label="Nível CEFR">
+            <button type="button" class="level-pill-btn" data-level="A1">A1</button>
+            <button type="button" class="level-pill-btn active" data-level="A2">A2</button>
+            <button type="button" class="level-pill-btn" data-level="B1">B1</button>
+            <button type="button" class="level-pill-btn" data-level="B2">B2</button>
+          </div>
+
+          <button id="open-placement-btn" class="btn-ghost btn-xs full-width placement-trigger-btn" type="button">
+            Descobrir meu nível
+          </button>
+
+          <div id="adaptive-level-banner" class="adaptive-banner" hidden>
+            <p id="adaptive-level-text" class="small"></p>
+            <div class="adaptive-banner-actions">
+              <button id="adaptive-level-accept" class="btn-primary btn-xs" type="button">Avançar</button>
+              <button id="adaptive-level-dismiss" class="btn-ghost btn-xs" type="button">Depois</button>
+            </div>
+          </div>
+
+          <label class="field sr-only">
+            <span>Nível atual (CEFR)</span>
+            <select id="student-level">
+              <option value="A1">A1 — Iniciante</option>
+              <option value="A2" selected>A2 — Básico</option>
+              <option value="B1">B1 — Intermediário</option>
+              <option value="B2">B2 — Avançado</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span>Objetivo</span>
+            <select id="student-goal">
+              <option value="Inglês para Tecnologia / Microsoft Learn">Tech &amp; Microsoft Learn</option>
+              <option value="Entrevista e Carreira">Carreira &amp; Daily</option>
+              <option value="Estudos Acadêmicos">Leitura Técnica</option>
+              <option value="Base do Zero">Conversação Base (A1)</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span>Modo Pedagógico (Skill)</span>
+            <select id="skill-select">
+              <option value="auto" selected>Automático (Recomendado)</option>
+            </select>
+          </label>
+
+          <details class="demo-box">
+            <summary class="demo-summary">
+              <span>Exemplos por Skill</span>
+              <span class="demo-chevron" aria-hidden="true">&#9662;</span>
+            </summary>
+            <div class="demo-list-head">
+              <button id="random-prompt-btn" class="btn-chip btn-xs full-width" type="button" title="Sortear pergunta">
+                Sortear pergunta
+              </button>
+            </div>
+            <div id="demo-prompts" class="demo-list"></div>
+          </details>
+
+          <div class="sidebar-actions">
+            <button id="open-quiz-shortcut" class="btn-secondary full-width" type="button">
+              Praticar no Quiz &rarr;
+            </button>
+            <div class="sidebar-export-row">
+              <button id="export-summary" class="btn-ghost btn-xs" type="button" title="Exportar boletim completo em Markdown (LGPD)">
+                Boletim (.md)
+              </button>
+              <button id="print-report-btn" class="btn-ghost btn-xs" type="button" title="Abrir versão imprimível do boletim da sessão">
+                Imprimir
+              </button>
+            </div>
+          </div>
+        </aside>
+
+        <div class="chat-card">
+          <div id="chat-log" class="chat-log" aria-live="polite"></div>
+
+          <div id="challenge-reply-banner" class="challenge-banner" hidden>
+            <div class="challenge-banner-content">
+              <span class="pill pill-accent">Desafio</span>
+              <span id="challenge-banner-text" class="small"></span>
+            </div>
+            <div class="challenge-banner-actions">
+              <button id="fill-challenge-hint" class="btn-chip btn-xs" type="button">
+                Ver exemplo
+              </button>
+              <button id="cancel-challenge-reply" class="btn-chip btn-xs" type="button">Fechar</button>
+            </div>
+          </div>
+
+          <form id="chat-form" class="chat-form">
+            <label class="sr-only" for="chat-input">Digite sua dúvida ou frase em inglês</label>
+            <div class="chat-input-wrapper">
+              <textarea
+                id="chat-input"
+                rows="2"
+                placeholder="Digite sua dúvida ou pratique uma frase em inglês..."
+                required
+              ></textarea>
+              <div class="chat-input-tools">
+                <button
+                  id="voice-input-btn"
+                  class="btn-chip"
+                  type="button"
+                  title="Falar pelo microfone"
+                  aria-label="Falar pelo microfone"
+                >
+                  Voz
+                </button>
+                <button
+                  id="suggest-question-btn"
+                  class="btn-chip"
+                  type="button"
+                  title="Sugerir pergunta para seu nível"
+                >
+                  Sugerir
+                </button>
+                <button id="send-btn" class="btn-primary" type="submit">Enviar</button>
+              </div>
+            </div>
+            <div class="chat-form-footer">
+              <span id="memory-status" class="muted small">Sessão local (0 turnos · LGPD)</span>
+              <span class="kbd-hint muted small"><kbd>Enter</kbd> envia · <kbd>Ctrl+K</kbd> focar · <kbd>Esc</kbd> áudio</span>
+            </div>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 1.5: SIMULADOR DAILY / ENTREVISTA -->
+    <section id="tab-simulator" class="tab-panel" role="tabpanel" hidden>
+      <div class="card-block">
+        <div class="quiz-top-row">
+          <div>
+            <h2>Simulador Guiado (Daily &amp; Entrevista)</h2>
+            <p class="muted small">Prática focada multi-turno com avaliação por etapa e mini-boletim final.</p>
+          </div>
+          <div class="quiz-score-bar">
+            <div class="quiz-view-toggle" role="group" aria-label="Modo do simulador">
+              <button id="sim-mode-daily" class="btn-chip btn-xs active" type="button" aria-pressed="true">Daily (3)</button>
+              <button id="sim-mode-interview" class="btn-chip btn-xs" type="button" aria-pressed="false">Entrevista (4)</button>
+            </div>
+            <button id="sim-restart-btn" class="btn-chip btn-xs" type="button">Nova rodada</button>
+          </div>
+        </div>
+
+        <div id="sim-stepper" class="sim-stepper mt-md" aria-label="Etapas da simulação"></div>
+
+        <div id="sim-stage-card" class="sim-stage-card mt-md">
+          <div class="brand-title-row" style="justify-content:space-between">
+            <span id="sim-step-badge" class="pill pill-accent">Etapa 1 / 3 · Yesterday</span>
+            <button id="sim-speak-question-btn" class="btn-chip btn-xs" type="button" title="Ouvir pergunta em Inglês">🔊 Ouvir pergunta</button>
+          </div>
+          <h3 id="sim-question-text" class="sim-question-title">Carregando simulação...</h3>
+          <p id="sim-hint-text" class="small muted" style="margin:0 0 10px"></p>
+
+          <form id="sim-answer-form" class="sim-answer-form">
+            <label class="sr-only" for="sim-answer-input">Sua resposta em inglês</label>
+            <textarea
+              id="sim-answer-input"
+              rows="3"
+              placeholder="Escreva sua resposta em inglês..."
+              required
+            ></textarea>
+            <div class="chat-form-footer">
+              <button id="sim-fill-example-btn" class="btn-chip btn-xs" type="button">Ver exemplo</button>
+              <button id="sim-submit-btn" class="btn-primary" type="submit">Avaliar e avançar</button>
+            </div>
+          </form>
+        </div>
+
+        <div id="sim-feedback-area" class="mt-md" hidden></div>
+        <div id="sim-report-area" class="mt-md" hidden></div>
+      </div>
+    </section>
+
+    <!-- TAB 1.7: CADERNO DE VOCABULÁRIO (SRS) -->
+    <section id="tab-vocab" class="tab-panel" role="tabpanel" hidden>
+      <div class="card-block">
+        <div class="quiz-top-row">
+          <div>
+            <h2>Caderno de Vocabulário (SRS)</h2>
+            <p id="vocab-stats-text" class="muted small">0 termos salvos · 0 para revisar agora</p>
+          </div>
+          <div class="quiz-score-bar">
+            <input id="vocab-search-input" class="filter-input" type="search" placeholder="Buscar termo..." aria-label="Buscar termo no vocabulário" />
+            <button id="vocab-export-csv-btn" class="btn-chip btn-xs" type="button" title="Exportar flashcards em CSV compatível com Anki">Exportar Anki (.csv)</button>
+            <button id="vocab-review-btn" class="btn-primary btn-xs" type="button">Iniciar revisão</button>
+          </div>
+        </div>
+
+        <div id="vocab-flashcard-stage" class="flashcard-stage mt-md" hidden></div>
+
+        <details class="demo-box mt-md">
+          <summary class="demo-summary">
+            <span>+ Adicionar termo manualmente</span>
+            <span class="demo-chevron" aria-hidden="true">&#9662;</span>
+          </summary>
+          <form id="vocab-add-form" class="quiz-generator-form mt-sm">
+            <label class="field">
+              <span>Termo / Frase em Inglês</span>
+              <input id="vocab-input-en" class="text-input" type="text" required placeholder="Ex.: Grounding reduces hallucinations." />
+            </label>
+            <label class="field">
+              <span>Significado / Dica (PT)</span>
+              <input id="vocab-input-meaning" class="text-input" type="text" required placeholder="Ex.: Ancoragem reduz alucinações da IA." />
+            </label>
+            <label class="field">
+              <span>Contexto técnico</span>
+              <input id="vocab-input-context" class="text-input" type="text" placeholder="Ex.: Microsoft Learn · RAG" />
+            </label>
+            <button class="btn-primary" type="submit">Salvar</button>
+          </form>
+        </details>
+      </div>
+
+      <div id="vocab-list" class="vocab-grid mt-md"></div>
+    </section>
+
+    <!-- TAB 2: SKILLS & BASE CURADA -->
+    <section id="tab-skills" class="tab-panel" role="tabpanel" hidden>
+      <div class="section-header">
+        <div>
+          <h2>Biblioteca RAG (<span id="docs-count-label">10</span> documentos)</h2>
+          <p class="muted small">Base curada indexada com busca local BM25.</p>
+        </div>
+        <input id="knowledge-filter" class="filter-input" type="search" placeholder="Filtrar documentos..." aria-label="Filtrar documentos da base RAG" />
+      </div>
+
+      <details class="card-block collapsible-card">
+        <summary class="collapsible-summary">
+          <span>+ Cadastrar novo conhecimento no RAG (Painel Docente)</span>
+          <span class="pill">Indexação ao vivo</span>
+        </summary>
+        <div class="collapsible-body">
+          <div id="rag-upload-dropzone" class="upload-dropzone" role="button" tabindex="0" aria-label="Importar arquivo .md ou .txt para a base RAG">
+            <input id="rag-file-input" type="file" accept=".md,.txt,text/markdown,text/plain" hidden />
+            <span class="small"><strong>Importar arquivo (.md ou .txt)</strong> — arraste aqui ou clique para indexar no BM25</span>
+          </div>
+
+          <div class="teacher-preset-bar mt-sm">
+            <span class="muted small">Preencher exemplo:</span>
+            <button id="fill-sample-rag" class="btn-chip btn-xs" type="button">Azure AI &amp; Prompt Flow</button>
+            <button id="fill-sample-rag-git" class="btn-chip btn-xs" type="button">Git Rebase &amp; PR</button>
+            <button id="fill-sample-rag-daily" class="btn-chip btn-xs" type="button">Phrasal Verbs Daily</button>
+          </div>
+
+          <form id="teacher-rag-form" class="teacher-rag-form mt-md">
+            <div class="teacher-form-grid">
+              <label class="field">
+                <span>Título</span>
+                <input id="rag-doc-title" class="text-input" type="text" required placeholder="Ex.: Azure AI Studio e Guardrails" />
+              </label>
+              <label class="field">
+                <span>Nível</span>
+                <select id="rag-doc-level">
+                  <option value="A1">A1</option>
+                  <option value="A2">A2</option>
+                  <option value="B1" selected>B1</option>
+                  <option value="B2">B2</option>
+                  <option value="ALL">Todos</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Categoria</span>
+                <input id="rag-doc-category" class="text-input" type="text" value="Curadoria Docente" required />
+              </label>
+              <label class="field">
+                <span>Seção</span>
+                <input id="rag-doc-section" class="text-input" type="text" required placeholder="Ex.: Vocabulário Técnico" />
+              </label>
+            </div>
+            <label class="field">
+              <span>Fonte</span>
+              <input id="rag-doc-source" class="text-input" type="text" value="Painel Docente USJT" required />
+            </label>
+            <label class="field">
+              <span>Conteúdo (inclua exemplos em inglês entre aspas)</span>
+              <textarea
+                id="rag-doc-content"
+                rows="3"
+                required
+                placeholder="Explique os termos e inclua frases em inglês entre aspas duplas..."
+              ></textarea>
+            </label>
+            <div class="chat-form-footer">
+              <span class="muted small">Disponível imediatamente no Chat e no Quiz.</span>
+              <button id="submit-rag-btn" class="btn-primary" type="submit">Indexar documento</button>
+            </div>
+          </form>
+          <div id="teacher-rag-status" class="teacher-rag-status" hidden></div>
+        </div>
+      </details>
+
+      <div id="knowledge-list" class="knowledge-grid mt-md"></div>
+
+      <div class="section-header mt-lg">
+        <div>
+          <h2>Skills Pedagógicas</h2>
+          <p class="muted small">Estratégias selecionadas automaticamente pelo <code>SkillRouter</code>.</p>
+        </div>
+      </div>
+      <div id="skills-grid" class="cards-grid"></div>
+
+      <details class="card-block collapsible-card mt-lg">
+        <summary class="collapsible-summary">
+          <span>Auditoria MTG-IA — Relatos de Erro ou Viés</span>
+          <span class="demo-chevron" aria-hidden="true">&#9662;</span>
+        </summary>
+        <div id="feedback-list" class="feedback-list mt-md"></div>
+      </details>
+    </section>
+
+    <!-- TAB 3: QUIZ -->
+    <section id="tab-quiz" class="tab-panel" role="tabpanel" hidden>
+      <div class="quiz-header-card card-block">
+        <div class="quiz-top-row">
+          <div>
+            <h2>Quiz de Vocabulário &amp; Pronúncia</h2>
+            <div class="quiz-progress-labels small muted">
+              <span id="quiz-progress-text">0 de 8 respondidas</span>
+              <span>·</span>
+              <span id="quiz-accuracy-text">Aproveitamento: --%</span>
+            </div>
+          </div>
+
+          <div class="quiz-score-bar">
+            <span id="quiz-score-pill" class="pill">0 / 0</span>
+            <span id="quiz-streak-pill" class="pill">Sequência: 0</span>
+            <div class="quiz-view-toggle" role="group" aria-label="Visualização">
+              <button id="quiz-view-focus" class="btn-chip btn-xs active" type="button" aria-pressed="true">Foco</button>
+              <button id="quiz-view-list" class="btn-chip btn-xs" type="button" aria-pressed="false">Lista</button>
+            </div>
+            <button id="quiz-reset-btn" class="btn-chip btn-xs" type="button">Reiniciar</button>
+          </div>
+        </div>
+
+        <div class="quiz-progress-track mt-sm" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <div id="quiz-progress-fill" class="quiz-progress-fill" style="width: 0%"></div>
+        </div>
+
+        <div id="quiz-adaptive-banner" class="adaptive-banner mt-sm" hidden>
+          <span id="quiz-adaptive-text" class="small"></span>
+          <div class="adaptive-banner-actions">
+            <button id="quiz-adaptive-accept" class="btn-primary btn-xs" type="button">Avançar</button>
+            <button id="quiz-adaptive-dismiss" class="btn-ghost btn-xs" type="button">Depois</button>
+          </div>
+        </div>
+
+        <div class="quiz-controls-row mt-md">
+          <div class="quiz-filters">
+            <select id="quiz-category-filter" aria-label="Filtrar por trilha">
+              <option value="ALL">Todas as trilhas</option>
+              <option value="Microsoft Learn">Microsoft Learn &amp; IA</option>
+              <option value="Cloud, APIs|Desenvolvimento">Cloud, APIs &amp; Git</option>
+              <option value="Falsos Cognatos|Armadilhas">Falsos Cognatos</option>
+              <option value="Gramática">Gramática (A1/A2)</option>
+              <option value="Leitura Técnica">Leitura Técnica</option>
+              <option value="Carreira">Carreira &amp; Daily</option>
+              <option value="Ética|ODS|Pedagogia">Ética &amp; ODS</option>
+              <option value="Curadoria Docente">Curadoria Docente</option>
+            </select>
+            <select id="quiz-level-filter" aria-label="Filtrar por nível">
+              <option value="ALL">Todos os níveis</option>
+              <option value="A1">Nível A1</option>
+              <option value="A2">Nível A2</option>
+              <option value="B1">Nível B1</option>
+              <option value="B2">Nível B2</option>
+            </select>
+          </div>
+
+          <div id="quiz-stepper" class="quiz-stepper" aria-label="Questões"></div>
+        </div>
+
+        <details class="quiz-generator-details mt-md">
+          <summary class="demo-summary">
+            <span>+ Gerar nova questão sob demanda (RAG + IA)</span>
+            <span class="demo-chevron" aria-hidden="true">&#9662;</span>
+          </summary>
+          <form id="quiz-generator-form" class="quiz-generator-form mt-sm">
+            <label class="field">
+              <span>Tema (opcional)</span>
+              <input id="quiz-gen-topic" class="text-input" type="text" placeholder="Ex.: Grounding, Falsos Cognatos, Daily..." />
+            </label>
+            <label class="field">
+              <span>Fonte RAG</span>
+              <select id="quiz-gen-doc">
+                <option value="ALL">Automático (Base Curada)</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Nível</span>
+              <select id="quiz-gen-level">
+                <option value="A1">A1</option>
+                <option value="A2">A2</option>
+                <option value="B1" selected>B1</option>
+                <option value="B2">B2</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Qtd.</span>
+              <select id="quiz-gen-count">
+                <option value="1" selected>+1</option>
+                <option value="2">+2</option>
+                <option value="3">+3</option>
+              </select>
+            </label>
+            <button id="quiz-gen-btn" class="btn-primary" type="submit">Gerar</button>
+          </form>
+          <div id="quiz-gen-status" class="quiz-gen-status" hidden></div>
+        </details>
+      </div>
+
+      <div id="quiz-container" class="quiz-container mt-md"></div>
+    </section>
+
+    <!-- TAB 4: ARQUITETURA, ODS & ÉTICA -->
+    <section id="tab-architecture" class="tab-panel" role="tabpanel" hidden>
+      <div class="card-block">
+        <div class="quiz-top-row">
+          <div>
+            <h2>Métricas da Sessão &amp; Governança</h2>
+            <p class="muted small">Indicadores agregados em tempo real (sem retenção de dados pessoais · LGPD).</p>
+          </div>
+          <div class="quiz-score-bar">
+            <a href="/swagger-ui.html" target="_blank" rel="noopener" class="btn-chip btn-xs" style="text-decoration:none">
+              API Swagger UI &nearr;
+            </a>
+            <button id="refresh-metrics-btn" class="btn-chip btn-xs" type="button">Atualizar</button>
+          </div>
+        </div>
+        <div id="metrics-grid" class="metrics-grid mt-md"></div>
+        <div id="metrics-breakdown" class="metrics-breakdown mt-sm"></div>
+      </div>
+
+      <div class="card-block mt-md">
+        <h2>Arquitetura (Java 25 + Spring Boot + RAG BM25)</h2>
+        <div class="arch-flow" role="list">
+          <div class="arch-node" role="listitem">
+            <strong>1. Perfil Local</strong>
+            <span>Nível CEFR, Modo Leve e memória restrita à sessão.</span>
+          </div>
+          <div class="arch-node" role="listitem">
+            <strong>2. SkillRouter</strong>
+            <span>Seleciona entre 5 estratégias pedagógicas.</span>
+          </div>
+          <div class="arch-node" role="listitem">
+            <strong>3. RAG BM25</strong>
+            <span>Busca local em documentos curados sem custo.</span>
+          </div>
+          <div class="arch-node" role="listitem">
+            <strong>4. LLM Híbrido</strong>
+            <span>Gemini 3.8 Flash / Groq / Ollama ou fallback local.</span>
+          </div>
+          <div class="arch-node" role="listitem">
+            <strong>5. Governança MTG-IA</strong>
+            <span>Rastreabilidade, áudio nativo e proteção LGPD.</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="two-col mt-md">
+        <div class="card-block">
+          <h3>ODS (Agenda 2030)</h3>
+          <ul class="clean-list">
+            <li><strong>ODS 4 (Educação):</strong> tutoria socrática e prática ativa.</li>
+            <li><strong>ODS 10 (Inclusão):</strong> baixo consumo de dados e funcionamento offline.</li>
+            <li><strong>ODS 16 (Transparência):</strong> fontes auditáveis e conformidade LGPD.</li>
+          </ul>
+        </div>
+
+        <div class="card-block">
+          <h3>Tripla Governança (MTG-IA)</h3>
+          <ul class="clean-list">
+            <li><strong>Tecnológico:</strong> identificador único (watermark) e fontes explícitas.</li>
+            <li><strong>Educacional:</strong> curadoria docente ao vivo e incentivo à autonomia.</li>
+            <li><strong>Legal:</strong> zero retenção de dados pessoais e canal de auditoria.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="card-block mt-md">
+        <h3>USJT · UC Dual 2026-2 (Caso 3 — Educação de Idiomas)</h3>
+        <p class="team-list muted">
+          André Luis Tres Guerlando · Asafe Alves Octaviani · Camilly Vitória da Silva Leal Campos ·
+          Gabriel Henrique Augusto Siqueira · Gustavo Leite de Oliveira · Heloisa Soares Gomes ·
+          Jhonatan Laerti Santos Silva · Laura Arantes Teni · Luís Fernando Candido da Silva · Miguel Pires Marinho
+        </p>
+      </div>
+    </section>
+  </main>
+
+  <!-- MODAL DE MINI-TESTE DE NIVELAMENTO CEFR -->
+  <dialog id="placement-dialog" class="modal">
+    <div class="modal-box placement-modal-box">
+      <div class="brand-title-row" style="justify-content:space-between">
+        <h3 style="margin:0">Nivelamento Rápido (CEFR)</h3>
+        <span id="placement-step-pill" class="pill pill-accent">1 / 4</span>
+      </div>
+      <div id="placement-body" class="mt-md"></div>
+      <div class="modal-actions mt-md">
+        <button id="close-placement-btn" class="btn-chip" type="button">Fechar</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- MODAL DE REPORTE MTG-IA -->
+  <dialog id="feedback-dialog" class="modal">
+    <form id="feedback-form" method="dialog" class="modal-box">
+      <h3>Reportar problema na resposta</h3>
+      <p class="muted small">ID: <code id="feedback-watermark"></code></p>
+      <label class="field">
+        <span>Categoria</span>
+        <select id="feedback-category">
+          <option value="Alucinação / Informação incorreta">Informação incorreta</option>
+          <option value="Viés algorítmico ou exclusão">Viés ou exclusão</option>
+          <option value="Explicação pouco clara">Explicação pouco clara</option>
+          <option value="Sugestão de melhoria">Sugestão de melhoria</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Descrição</span>
+        <textarea id="feedback-comment" rows="3" required placeholder="Descreva brevemente..."></textarea>
+      </label>
+      <div class="modal-actions">
+        <button id="cancel-feedback" class="btn-chip" type="button">Cancelar</button>
+        <button class="btn-primary" type="submit">Enviar relato</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
