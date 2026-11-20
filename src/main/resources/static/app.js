@@ -49,6 +49,12 @@ const state = {
     step: 0,
     score: 0,
     answers: []
+  },
+  learnerState: {
+    weakPoints: [],
+    masteredTopics: [],
+    recentTopics: [],
+    quizAccuracyPercent: null
   }
 };
 
@@ -264,16 +270,18 @@ function renderMiniMarkdown(text) {
 }
 
 function extractEnglishExamplesFallback(reply, sources) {
-  const regex = /"([^"]{4,140})"|'([^']{4,140})'/g;
+  const avoidRegex = /❌[^✅\n]*/g;
+  const regex = /"([^"\n]{4,140})"|'([^'\n]{4,140})'/g;
   const ptChars = /[ãõçáéíóúâêôà]/i;
   const ptWords = /\b(nao|voce|atualmente|na verdade|livraria|pretender|parentes|atender|suportar|aguentar|tenho|anos|sugere|valida)\b/i;
-  const enWords = /\b(i|you|he|she|it|we|they|am|is|are|was|were|do|does|did|have|has|will|would|could|should|can|must|the|in|on|at|to|for|with|from|yesterday|today|actually|currently|nowadays|pretend|intend|library|attend|support|parents|study|studied|worked|work|learning|student|question|information|feedback|blocker|endpoint|payload|grounding|hallucination|push|pull|daily|api)\b/i;
+  const enWords = /\b(i|you|he|she|it|we|they|am|is|are|was|were|do|does|did|have|has|will|would|could|should|can|must|the|and|but|while|before|after|under|through|every|more|than|without|in|on|at|to|for|with|from|into|yesterday|today|actually|currently|nowadays|pretend|intend|library|attend|support|parents|study|studied|worked|work|learning|student|students|question|information|feedback|blocker|endpoint|payload|grounding|hallucination|push|pull|daily|api|review|documentation|null|exception|error|branch|commit|avoid|remove|means|includes|supports|reduces|builds|turns|produce|beats|models|answers|sources|practice|safety)\b/i;
 
   const set = new Set();
   const scan = (txt) => {
     if (!txt) return;
+    const sanitized = txt.replace(avoidRegex, "");
     let m;
-    while ((m = regex.exec(txt)) !== null) {
+    while ((m = regex.exec(sanitized)) !== null) {
       const candidate = (m[1] || m[2] || "").replace(/[*_`]/g, "").trim();
       if (!candidate) continue;
       const cleanCheck = candidate.replace(/São Paulo/g, "Sao Paulo");
@@ -291,12 +299,87 @@ function extractEnglishExamplesFallback(reply, sources) {
   return Array.from(set).slice(0, 5);
 }
 
+function pushUniqueCapped(list, value, maxLen = 8) {
+  const clean = String(value || "").replace(/\s+/g, " ").trim().slice(0, 80);
+  if (!clean) return list;
+  const filtered = list.filter((item) => item.toLowerCase() !== clean.toLowerCase());
+  filtered.unshift(clean);
+  return filtered.slice(0, maxLen);
+}
+
+function removeCaseInsensitive(list, value) {
+  const norm = String(value || "").trim().toLowerCase();
+  if (!norm) return list;
+  return list.filter((item) => item.toLowerCase() !== norm);
+}
+
+function applyLearnerStateDelta(delta) {
+  if (!delta || typeof delta !== "object") return;
+  let changed = false;
+  (delta.addedWeakPoints || []).forEach((wp) => {
+    state.learnerState.weakPoints = pushUniqueCapped(state.learnerState.weakPoints, wp, 8);
+    state.learnerState.masteredTopics = removeCaseInsensitive(state.learnerState.masteredTopics, wp);
+    changed = true;
+  });
+  (delta.addedMasteredTopics || []).forEach((mt) => {
+    state.learnerState.masteredTopics = pushUniqueCapped(state.learnerState.masteredTopics, mt, 8);
+    state.learnerState.weakPoints = removeCaseInsensitive(state.learnerState.weakPoints, mt);
+    changed = true;
+  });
+  if (delta.focusTopic) {
+    state.learnerState.recentTopics = pushUniqueCapped(state.learnerState.recentTopics, delta.focusTopic, 6);
+    changed = true;
+  }
+  if (changed) {
+    saveLocalProgress();
+    updateMemoryAndTelemetryBar();
+  }
+}
+
+function recordLearnerQuizOutcome(category, isCorrect) {
+  const topic = String(category || "").trim();
+  if (topic) {
+    state.learnerState.recentTopics = pushUniqueCapped(state.learnerState.recentTopics, topic, 6);
+    if (isCorrect) {
+      state.learnerState.masteredTopics = pushUniqueCapped(state.learnerState.masteredTopics, topic, 8);
+      state.learnerState.weakPoints = removeCaseInsensitive(state.learnerState.weakPoints, topic);
+    } else {
+      state.learnerState.weakPoints = pushUniqueCapped(state.learnerState.weakPoints, topic, 8);
+      state.learnerState.masteredTopics = removeCaseInsensitive(state.learnerState.masteredTopics, topic);
+    }
+  }
+  if (state.quiz.totalAnswered > 0) {
+    state.learnerState.quizAccuracyPercent = Math.round(
+      (state.quiz.correctCount / state.quiz.totalAnswered) * 100
+    );
+  }
+  updateMemoryAndTelemetryBar();
+}
+
+function recordLearnerSimulationOutcome(turnEval, mode) {
+  if (!turnEval) return;
+  const label = `${mode === "interview" ? "Entrevista" : "Daily"}: ${turnEval.stepLabel || "Etapa"}`;
+  state.learnerState.recentTopics = pushUniqueCapped(state.learnerState.recentTopics, label, 6);
+  if (Number(turnEval.grammarScore) < 75) {
+    state.learnerState.weakPoints = pushUniqueCapped(state.learnerState.weakPoints, label, 8);
+    state.learnerState.masteredTopics = removeCaseInsensitive(state.learnerState.masteredTopics, label);
+  } else if (Number(turnEval.grammarScore) >= 85 && Number(turnEval.clarityScore) >= 80) {
+    state.learnerState.masteredTopics = pushUniqueCapped(state.learnerState.masteredTopics, label, 8);
+    state.learnerState.weakPoints = removeCaseInsensitive(state.learnerState.weakPoints, label);
+  }
+  saveLocalProgress();
+  updateMemoryAndTelemetryBar();
+}
+
 function updateMemoryAndTelemetryBar() {
   if (el.memoryStatus) {
     const turns = state.history.length;
+    const wpCount = state.learnerState.weakPoints.length;
+    const mtCount = state.learnerState.masteredTopics.length;
     el.memoryStatus.textContent = turns
       ? `Sessão local (${turns} turno${turns > 1 ? "s" : ""} · LGPD)`
       : "Sessão local (0 turnos · LGPD)";
+    el.memoryStatus.title = `Memória pedagógica local (LGPD): ${wpCount} ponto(s) a reforçar · ${mtCount} tópico(s) dominado(s). Apagada ao clicar em Limpar.`;
   }
   if (el.telemetryPill) {
     const modeTag = state.lowDataMode ? " · Leve" : "";
@@ -311,6 +394,7 @@ function saveLocalProgress() {
       goal: el.goal?.value || "Inglês para Tecnologia / Microsoft Learn",
       lowDataMode: state.lowDataMode,
       audioRate: state.audioRate,
+      learnerState: state.learnerState,
       quiz: {
         answered: state.quiz.answered,
         correctCount: state.quiz.correctCount,
@@ -345,6 +429,14 @@ function loadLocalProgress() {
     if (saved.audioRate === 0.75 || saved.audioRate === 1.0) {
       state.audioRate = saved.audioRate;
       updateAudioSpeedUI();
+    }
+    if (saved.learnerState && typeof saved.learnerState === "object") {
+      state.learnerState = {
+        weakPoints: Array.isArray(saved.learnerState.weakPoints) ? saved.learnerState.weakPoints.slice(0, 8) : [],
+        masteredTopics: Array.isArray(saved.learnerState.masteredTopics) ? saved.learnerState.masteredTopics.slice(0, 8) : [],
+        recentTopics: Array.isArray(saved.learnerState.recentTopics) ? saved.learnerState.recentTopics.slice(0, 6) : [],
+        quizAccuracyPercent: typeof saved.learnerState.quizAccuracyPercent === "number" ? saved.learnerState.quizAccuracyPercent : null
+      };
     }
     if (saved.quiz && typeof saved.quiz === "object") {
       state.quiz.answered = saved.quiz.answered || {};
@@ -770,6 +862,7 @@ function setupA11yAndShortcuts() {
     state.vocab.searchQuery = "";
     if (el.vocabSearchInput) el.vocabSearchInput.value = "";
     state.adaptive = { results: [], consecutiveCorrect: 0, consecutiveWrong: 0, pendingAction: null };
+    state.learnerState = { weakPoints: [], masteredTopics: [], recentTopics: [], quizAccuracyPercent: null };
     renderAdaptiveBanners();
     hideChallengeReplyBanner();
     updateMemoryAndTelemetryBar();
@@ -980,6 +1073,11 @@ function appendAiResponse(data, clientLatencyMs) {
 
   const serverMs = data.mtg.responseTimeMs ?? clientLatencyMs ?? 2;
   const payloadKb = Number(data.mtg.payloadSizeKb ?? 1.2).toFixed(2);
+  const groundedPct =
+    typeof data.mtg?.groundednessScore === "number" && data.mtg.sourcesCount > 0
+      ? Math.round(data.mtg.groundednessScore * 100)
+      : null;
+  const groundedTag = groundedPct !== null ? ` · Ancoragem ${groundedPct}%` : "";
   const guardrailBadges = [
     data.mtg?.piiMasked ? `<span class="pill pill-warn" title="Dados pessoais mascarados automaticamente (LGPD)">LGPD Ativa</span>` : "",
     data.mtg?.antiPlagiarismTriggered ? `<span class="pill pill-warn" title="Redirecionamento socrático anti-plágio (MTG-IA)">Anti-Plágio</span>` : ""
@@ -1017,7 +1115,7 @@ function appendAiResponse(data, clientLatencyMs) {
       ${sourcesHtml}
     </details>
     <div class="mtg-footer">
-      <span>${escapeHtml(data.mtg.executionMode)} · <code>${escapeHtml(data.mtg.watermarkId)}</code> · ${escapeHtml(serverMs)} ms · ${escapeHtml(payloadKb)} KB</span>
+      <span>${escapeHtml(data.mtg.executionMode)} · <code>${escapeHtml(data.mtg.watermarkId)}</code> · ${escapeHtml(serverMs)} ms · ${escapeHtml(payloadKb)} KB${escapeHtml(groundedTag)}</span>
       <button class="btn-ghost btn-xs report-btn" type="button">Reportar</button>
     </div>
   `;
@@ -1399,7 +1497,8 @@ async function submitChat(messageText) {
     goal: el.goal.value,
     preferredSkill: el.skillSelect.value,
     lowDataMode: state.lowDataMode,
-    history: recentHistory
+    history: recentHistory,
+    learnerState: state.learnerState
   };
 
   const t0 = performance.now();
@@ -1459,6 +1558,10 @@ async function submitChat(messageText) {
     updateMemoryAndTelemetryBar();
 
     appendAiResponse(data, rttMs);
+
+    if (data.learnerStateDelta) {
+      applyLearnerStateDelta(data.learnerStateDelta);
+    }
 
     const challengeOutcome = detectMicroChallengeOutcome(data.reply);
     if (challengeOutcome !== null) {
@@ -2214,6 +2317,7 @@ async function handleQuizAnswer(question, selectedIndex) {
     state.quiz.streak = 0;
   }
   recordAdaptiveOutcome(result.correct);
+  recordLearnerQuizOutcome(question.category, result.correct);
   saveLocalProgress();
   renderQuiz();
 }
@@ -2878,6 +2982,7 @@ function setupSimulator() {
           naturalVersion: data.turnEvaluation.naturalVersion
         });
         renderTurnEvaluation(data.turnEvaluation, data.executionMode, data.piiMasked);
+        recordLearnerSimulationOutcome(data.turnEvaluation, state.simulator.mode);
       }
 
       if (el.simAnswerInput) el.simAnswerInput.value = "";
