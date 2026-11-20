@@ -10,8 +10,10 @@ import br.edu.usjt.dinga.rag.Bm25RagRetriever;
 import br.edu.usjt.dinga.rag.KnowledgeBaseLoader;
 import br.edu.usjt.dinga.storage.JsonDataStore;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -34,6 +36,24 @@ public class QuizService {
     public static final String STORAGE_FILE = "generated-quiz.json";
     private static final Pattern BOLD_TERM = Pattern.compile("\\*\\*([^*]{2,55})\\*\\*");
     private static final Pattern GENERATED_ID_SEQ = Pattern.compile("^quiz-gen-(\\d+)$");
+    private static final HybridLlmClient.GenerationOptions QUIZ_GENERATION_OPTIONS =
+            HybridLlmClient.GenerationOptions.structuredJson(0.25, 0.85, 700, buildQuizResponseSchema());
+
+    private static Map<String, Object> buildQuizResponseSchema() {
+        Map<String, Object> properties = new LinkedHashMap<>();
+        properties.put("question", Map.of("type", "STRING"));
+        properties.put("codeOrDocSnippet", Map.of("type", "STRING"));
+        properties.put("options", Map.of("type", "ARRAY", "items", Map.of("type", "STRING")));
+        properties.put("correctIndex", Map.of("type", "INTEGER"));
+        properties.put("explanation", Map.of("type", "STRING"));
+        properties.put("englishExample", Map.of("type", "STRING"));
+
+        Map<String, Object> schema = new LinkedHashMap<>();
+        schema.put("type", "OBJECT");
+        schema.put("properties", properties);
+        schema.put("required", List.of("question", "codeOrDocSnippet", "options", "correctIndex", "explanation", "englishExample"));
+        return schema;
+    }
 
     private final KnowledgeBaseLoader knowledgeLoader;
     private final Bm25RagRetriever ragRetriever;
@@ -402,7 +422,9 @@ public class QuizService {
         String userPrompt = "Nível CEFR: " + req.level() + "\nFoco: " + topicFocus
                 + "\nDocumento RAG (" + chunk.docId() + " - " + chunk.section() + "):\n" + chunk.content();
 
-        Optional<HybridLlmClient.LlmResult> result = llmClient.generate(systemPrompt, userPrompt);
+        Optional<HybridLlmClient.LlmResult> result = llmClient.supportsGenerationOptions()
+                ? llmClient.generate(systemPrompt, userPrompt, QUIZ_GENERATION_OPTIONS)
+                : llmClient.generate(systemPrompt, userPrompt);
         if (result.isEmpty()) {
             return Optional.empty();
         }
@@ -590,7 +612,13 @@ public class QuizService {
         for (String rawLine : content.split("\n")) {
             String trimmed = rawLine.trim();
             if ((trimmed.startsWith("- ") || trimmed.startsWith("* ")) && trimmed.length() > 18) {
-                bullets.add(trimmed.substring(2).trim());
+                String body = trimmed.substring(2).trim();
+                String cleaned = cleanMarkdownLine(body);
+                // Ignora subtítulos de lista sem conteúdo próprio (ex.: "**Contrastes práticos:**", "**Frases naturais para praticar (🔊):**")
+                if (cleaned.endsWith(":") || cleaned.endsWith("：")) {
+                    continue;
+                }
+                bullets.add(body);
             }
         }
         return bullets;

@@ -1,5 +1,6 @@
 package br.edu.usjt.dinga.skills;
 
+import br.edu.usjt.dinga.llm.HybridLlmClient;
 import br.edu.usjt.dinga.model.ChatRequest;
 import br.edu.usjt.dinga.model.KnowledgeChunk;
 import br.edu.usjt.dinga.model.SkillDefinition;
@@ -87,6 +88,33 @@ public class InglesTecnicoSkill extends AbstractTeacherSkill {
         }
         return TECH_DOC_ENGLISH_SENTENCE.matcher(message).find()
                 && (DOC_MODAL_PATTERN.matcher(message).find() || message.length() >= 35);
+    }
+
+    @Override
+    public HybridLlmClient.GenerationOptions generationOptions() {
+        return HybridLlmClient.GenerationOptions.of(0.25, 0.85);
+    }
+
+    @Override
+    protected String buildFewShotExamples(String level, boolean lowDataMode) {
+        return switch (level) {
+            case "A1" -> """
+                    Entrada: "O que significa 'endpoint'?"
+                    Resposta ideal: **Endpoint** é o endereço (URL) onde um serviço de API recebe pedidos, como um balcão de atendimento digital. Exemplo: "The app calls the /api/chat endpoint." Tente citar um endereço de API que você já viu!
+                    """;
+            case "A2" -> """
+                    Entrada: "O que significa 'git push rejected'?"
+                    Resposta ideal: Significa que o servidor recusou o envio dos seus commits porque já existem alterações novas na branch remota. Exemplo: "The push was rejected, so I ran git pull first." O que você rodaria antes de tentar o push de novo?
+                    """;
+            case "B2" -> """
+                    Entrada: "Como explicar grounding e fallback em uma revisão de arquitetura?"
+                    Resposta ideal: **Grounding** ancora o LLM em evidências verificáveis (RAG) para mitigar alucinações, enquanto **fallback** garante continuidade com degradação graciosa sob falha ou limite de cota. Exemplo: "Our RAG pipeline grounds Gemini 3.8 Flash responses and falls back to local BM25 under rate limits." Como você descreveria a resiliência da sua API em 1 frase?
+                    """;
+            default -> """
+                    Entrada: "O que significam grounding e hallucination no Microsoft Learn?"
+                    Resposta ideal: **Grounding** é ancorar o modelo em documentos confiáveis (via RAG) para que ele responda com base em fatos; **hallucination** é quando a IA gera algo plausível, mas inventado. Exemplo: "Grounding with RAG reduces hallucinations in technical documentation." Consegue resumir essa diferença em 1 frase sua?
+                    """;
+        };
     }
 
     @Override

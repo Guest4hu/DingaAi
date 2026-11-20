@@ -12,10 +12,12 @@ public record ChatResponse(
         List<KnowledgeChunk> retrievedSources,
         String practicePrompt,
         MtgMetadata mtg,
-        List<String> englishExamples
+        List<String> englishExamples,
+        LearnerStateDelta learnerStateDelta
 ) {
     public ChatResponse {
         englishExamples = englishExamples == null ? List.of() : List.copyOf(englishExamples);
+        learnerStateDelta = learnerStateDelta == null ? LearnerStateDelta.empty() : learnerStateDelta;
     }
 
     public ChatResponse(
@@ -26,6 +28,18 @@ public record ChatResponse(
             String practicePrompt,
             MtgMetadata mtg
     ) {
-        this(reply, activeSkill, skillReasoning, retrievedSources, practicePrompt, mtg, List.of());
+        this(reply, activeSkill, skillReasoning, retrievedSources, practicePrompt, mtg, List.of(), LearnerStateDelta.empty());
+    }
+
+    public ChatResponse(
+            String reply,
+            SkillDefinition activeSkill,
+            String skillReasoning,
+            List<KnowledgeChunk> retrievedSources,
+            String practicePrompt,
+            MtgMetadata mtg,
+            List<String> englishExamples
+    ) {
+        this(reply, activeSkill, skillReasoning, retrievedSources, practicePrompt, mtg, englishExamples, LearnerStateDelta.empty());
     }
 }

@@ -1,5 +1,6 @@
 package br.edu.usjt.dinga.skills;
 
+import br.edu.usjt.dinga.llm.HybridLlmClient;
 import br.edu.usjt.dinga.model.ChatRequest;
 import br.edu.usjt.dinga.model.KnowledgeChunk;
 import br.edu.usjt.dinga.model.SkillDefinition;
@@ -11,6 +12,13 @@ import java.util.List;
 public interface TeacherSkill {
 
     SkillDefinition definition();
+
+    /**
+     * Parâmetros de decodificação (Controlled Decoding: temperatura e topP) calibrados para esta Skill.
+     */
+    default HybridLlmClient.GenerationOptions generationOptions() {
+        return HybridLlmClient.GenerationOptions.defaults();
+    }
 
     /**
      * Pontua a aderência desta Skill à mensagem do aluno (0 = sem afinidade).

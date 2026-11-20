@@ -27,8 +27,10 @@ import br.edu.usjt.dinga.service.TtsService;
 import br.edu.usjt.dinga.skills.SkillRouter;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -105,33 +107,37 @@ public class DingaController {
 
     @GetMapping("/health")
     public Map<String, Object> health() {
-        return Map.of(
-                "status", "UP",
-                "app", "Dinga AI",
-                "skillsCount", skillRouter.listDefinitions().size(),
-                "documentsCount", knowledgeLoader.getDocumentsSummary().size(),
-                "chunksCount", knowledgeLoader.getChunks().size(),
-                "quizQuestionsCount", quizService.listQuestions(null, null).size(),
-                "llmMode", llmProperties.resolvedProviderName()
-        );
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("status", "UP");
+        body.put("app", "Dinga AI");
+        body.put("skillsCount", skillRouter.listDefinitions().size());
+        body.put("documentsCount", knowledgeLoader.getDocumentsSummary().size());
+        body.put("chunksCount", knowledgeLoader.getChunks().size());
+        body.put("quizQuestionsCount", quizService.listQuestions(null, null).size());
+        body.put("llmMode", llmProperties.resolvedProviderName());
+        body.put("ragMode", ragRetriever.ragModeLabel());
+        body.put("cachedEmbeddingsCount", ragRetriever.cachedEmbeddingsCount());
+        return body;
     }
 
     @GetMapping("/meta")
     public Map<String, Object> meta() {
         List<SkillDefinition> skills = skillRouter.listDefinitions();
         List<KnowledgeDocumentSummary> docs = knowledgeLoader.getDocumentsSummary();
-        return Map.of(
-                "projectName", "Dinga AI — Educação de Idiomas",
-                "challenge", "Caso 3 – Educação personalizada com IA na plataforma Microsoft Learn",
-                "institution", "Universidade São Judas Tadeu (USJT)",
-                "course", "UC Dual: Inteligência Artificial e Sociedade: soluções e desafios para o futuro",
-                "llmProvider", llmProperties.resolvedProviderName(),
-                "remoteLlmEnabled", llmProperties.isRemoteLlmConfigured(),
-                "skills", skills,
-                "documents", docs,
-                "chunksCount", knowledgeLoader.getChunks().size(),
-                "quizCount", quizService.listQuestions(null, null).size()
-        );
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("projectName", "Dinga AI — Educação de Idiomas");
+        body.put("challenge", "Caso 3 – Educação personalizada com IA na plataforma Microsoft Learn");
+        body.put("institution", "Universidade São Judas Tadeu (USJT)");
+        body.put("course", "UC Dual: Inteligência Artificial e Sociedade: soluções e desafios para o futuro");
+        body.put("llmProvider", llmProperties.resolvedProviderName());
+        body.put("remoteLlmEnabled", llmProperties.isRemoteLlmConfigured());
+        body.put("ragMode", ragRetriever.ragModeLabel());
+        body.put("cachedEmbeddingsCount", ragRetriever.cachedEmbeddingsCount());
+        body.put("skills", skills);
+        body.put("documents", docs);
+        body.put("chunksCount", knowledgeLoader.getChunks().size());
+        body.put("quizCount", quizService.listQuestions(null, null).size());
+        return body;
     }
 
     @Operation(summary = "Chat com o Tutor Dinga AI", description = "Aplica Guardrails LGPD e Anti-Plágio, roteia Skill, recupera RAG BM25 e responde via Gemini 3.8 Flash ou fallback local.")
@@ -146,8 +152,12 @@ public class DingaController {
             description = "Entrega a resposta progressivamente via Server-Sent Events (eventos 'token' e 'done') usando Gemini 3.8 Flash com fallback transparente para RAG local."
     )
     @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter chatStream(@RequestBody ChatRequest request) {
+    public SseEmitter chatStream(@RequestBody ChatRequest request, HttpServletResponse response) {
         validateChatRequest(request);
+        if (response != null) {
+            response.setHeader("X-Accel-Buffering", "no");
+            response.setHeader("Cache-Control", "no-cache, no-transform");
+        }
         SseEmitter emitter = new SseEmitter(60_000L);
         AtomicBoolean closed = new AtomicBoolean(false);
         emitter.onCompletion(() -> closed.set(true));

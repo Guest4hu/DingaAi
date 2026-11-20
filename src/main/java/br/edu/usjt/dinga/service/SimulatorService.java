@@ -6,9 +6,11 @@ import br.edu.usjt.dinga.model.SimulationResponse;
 import br.edu.usjt.dinga.model.SimulationTurn;
 import br.edu.usjt.dinga.skills.PraticaAtivaSkill;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Pattern;
@@ -92,6 +94,29 @@ public class SimulatorService {
     private final HybridLlmClient llmClient;
     private final ObjectMapper objectMapper;
     private final SessionMetricsService metricsService;
+
+    private static final HybridLlmClient.GenerationOptions SIMULATOR_GENERATION_OPTIONS =
+            HybridLlmClient.GenerationOptions.structuredJson(0.50, 0.92, 650, buildSimulatorResponseSchema());
+
+    private static Map<String, Object> buildSimulatorResponseSchema() {
+        Map<String, Object> properties = new LinkedHashMap<>();
+        properties.put("clarityScore", Map.of("type", "INTEGER"));
+        properties.put("grammarScore", Map.of("type", "INTEGER"));
+        properties.put("technicalVocabScore", Map.of("type", "INTEGER"));
+        properties.put("feedback", Map.of("type", "STRING"));
+        properties.put("naturalVersion", Map.of("type", "STRING"));
+        properties.put("strength", Map.of("type", "STRING"));
+        properties.put("improvement", Map.of("type", "STRING"));
+
+        Map<String, Object> schema = new LinkedHashMap<>();
+        schema.put("type", "OBJECT");
+        schema.put("properties", properties);
+        schema.put("required", List.of(
+                "clarityScore", "grammarScore", "technicalVocabScore",
+                "feedback", "naturalVersion", "strength", "improvement"
+        ));
+        return schema;
+    }
 
     public SimulatorService(HybridLlmClient llmClient, ObjectMapper objectMapper) {
         this(llmClient, objectMapper, null);
@@ -233,7 +258,9 @@ public class SimulatorService {
         String userPrompt = "Pergunta feita ao aluno: " + step.question()
                 + "\nResposta do aluno: " + safeAnswer;
 
-        Optional<HybridLlmClient.LlmResult> result = llmClient.generate(systemPrompt, userPrompt);
+        Optional<HybridLlmClient.LlmResult> result = llmClient.supportsGenerationOptions()
+                ? llmClient.generate(systemPrompt, userPrompt, SIMULATOR_GENERATION_OPTIONS)
+                : llmClient.generate(systemPrompt, userPrompt);
         if (result.isEmpty()) {
             return Optional.empty();
         }

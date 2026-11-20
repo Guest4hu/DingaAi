@@ -1,5 +1,6 @@
 package br.edu.usjt.dinga.skills;
 
+import br.edu.usjt.dinga.llm.HybridLlmClient;
 import br.edu.usjt.dinga.model.ChatRequest;
 import br.edu.usjt.dinga.model.KnowledgeChunk;
 import br.edu.usjt.dinga.model.SkillDefinition;
@@ -126,6 +127,49 @@ public class PraticaAtivaSkill extends AbstractTeacherSkill {
                 "ODS 4 (Aprendizagem ativa e autonomia)",
                 "Corrija minha frase de daily: 'Yesterday I work in the API and have 20 years old.'"
         ));
+    }
+
+    @Override
+    public HybridLlmClient.GenerationOptions generationOptions() {
+        return HybridLlmClient.GenerationOptions.of(0.55, 0.92);
+    }
+
+    @Override
+    protected String buildFewShotExamples(String level, boolean lowDataMode) {
+        return switch (level) {
+            case "A1" -> """
+                    Entrada: "Corrija: I have 19 years and study TI."
+                    Resposta ideal:
+                    - **O que acertou:** A apresentação está super clara!
+                    - **O que ajustar:** Em inglês, idade usa **to be** (*I am 19 years old*), e TI se diz **IT** (*Information Technology*).
+                    - **Forma natural:** "I am 19 years old and I study IT."
+                    Agora tente trocar a idade ou o curso e escrever uma nova frase!
+                    """;
+            case "B1" -> """
+                    Entrada: "Corrija: I have a doubt, it depend of the API."
+                    Resposta ideal:
+                    - **O que acertou:** Você expressou a condição técnica com objetividade.
+                    - **O que ajustar:** Para "tenho uma dúvida", use **have a question**; com **it**, o verbo recebe **-s** e pede **on** (*depends on*).
+                    - **Forma natural:** "I have a question: does it depend on the API?"
+                    Experimente criar outra pergunta técnica usando **depends on**!
+                    """;
+            case "B2" -> """
+                    Entrada: "Corrija: Yesterday I didn't went to the review because I pretend to finish the deploy."
+                    Resposta ideal:
+                    - **O que acertou:** Boa conexão de causa e efeito usando *because*.
+                    - **O que ajustar:** Após **didn't**, o verbo volta à forma base (*didn't go*); e **pretend** significa *fingir* — para "pretendia", use **intended to** / **planned to**.
+                    - **Forma natural:** "Yesterday I didn't go to the review because I planned to finish the deploy."
+                    Reescreva agora contando um ajuste real da sua última sprint!
+                    """;
+            default -> """
+                    Entrada: "Corrija: Yesterday I work in the API."
+                    Resposta ideal:
+                    - **O que acertou:** Estrutura de daily bem objetiva!
+                    - **O que ajustar:** Com **Yesterday**, use o passado **worked**, e para projetos/APIs prefira a preposição **on**.
+                    - **Forma natural:** "Yesterday I worked on the API."
+                    Tente agora adicionar o que você vai fazer hoje (*Today I will...*)!
+                    """;
+        };
     }
 
     @Override

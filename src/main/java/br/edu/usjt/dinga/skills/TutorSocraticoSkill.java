@@ -1,5 +1,6 @@
 package br.edu.usjt.dinga.skills;
 
+import br.edu.usjt.dinga.llm.HybridLlmClient;
 import br.edu.usjt.dinga.model.ChatRequest;
 import br.edu.usjt.dinga.model.KnowledgeChunk;
 import br.edu.usjt.dinga.model.SkillDefinition;
@@ -22,6 +23,33 @@ public class TutorSocraticoSkill extends AbstractTeacherSkill {
                 "ODS 4 (Educação de Qualidade e pensamento crítico)",
                 "Qual a diferença entre 'actually' e 'currently' e como não errar em uma frase?"
         ));
+    }
+
+    @Override
+    public HybridLlmClient.GenerationOptions generationOptions() {
+        return HybridLlmClient.GenerationOptions.of(0.55, 0.92);
+    }
+
+    @Override
+    protected String buildFewShotExamples(String level, boolean lowDataMode) {
+        return switch (level) {
+            case "A1" -> """
+                    Entrada: "Como falo 'eu trabalho com tecnologia' em inglês?"
+                    Resposta ideal: No presente simples para rotina, usamos sujeito + verbo base: "I work with technology." E se fosse sobre um amigo (*he/she*)? Pense: o verbo ganha **-s** no final — como ficaria a frase?
+                    """;
+            case "B1" -> """
+                    Entrada: "Por que 'information' não tem plural em inglês?"
+                    Resposta ideal: **Information** é um substantivo incontável (*uncountable*), como *advice* e *feedback*, por isso nunca leva *-s*. Exemplo: "This documentation provides useful information." Como você pediria *algumas informações* sobre uma API sem usar plural?
+                    """;
+            case "B2" -> """
+                    Entrada: "Qual a nuance entre 'I intend to' e 'I am planning to' em um plano técnico?"
+                    Resposta ideal: **Intend to** soa mais formal e enfático sobre propósito (ótimo para RFCs e entrevistas), enquanto **plan to** é natural e colaborativo para dailies. Exemplo: "I intend to refactor the auth layer, and I plan to open the PR tomorrow." Como você reformularia uma meta da sua sprint com essa nuance?
+                    """;
+            default -> """
+                    Entrada: "Qual a diferença entre 'actually' e 'currently'?"
+                    Resposta ideal: **Actually** é falso cognato e significa **na verdade**; para **atualmente**, use **currently** ou **nowadays**. Exemplo: "Actually, I currently study English every night." Antes de avançar, tente montar 1 frase curta usando **actually**!
+                    """;
+        };
     }
 
     @Override

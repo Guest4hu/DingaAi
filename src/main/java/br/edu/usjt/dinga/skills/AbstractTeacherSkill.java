@@ -3,9 +3,11 @@ package br.edu.usjt.dinga.skills;
 import br.edu.usjt.dinga.model.ChatRequest;
 import br.edu.usjt.dinga.model.ChatTurn;
 import br.edu.usjt.dinga.model.KnowledgeChunk;
+import br.edu.usjt.dinga.model.LearnerState;
 import br.edu.usjt.dinga.model.SkillDefinition;
 import br.edu.usjt.dinga.rag.Bm25RagRetriever;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 
 /**
@@ -38,17 +40,45 @@ public abstract class AbstractTeacherSkill implements TeacherSkill {
 
     @Override
     public String buildSystemPrompt(ChatRequest request, List<KnowledgeChunk> chunks) {
+        String level = normalizeCefrLevel(request.level());
         StringBuilder sb = new StringBuilder();
         sb.append("Você é a Dinga AI, tutora inclusiva e ética de idiomas (Projeto Educação de Idiomas — Caso 3).\n");
         sb.append("Skill ativa: ").append(definition.name()).append(" (").append(definition.id()).append(")\n");
         sb.append("Regra pedagógica obrigatória: ").append(definition.pedagogyRule()).append("\n");
-        sb.append("Perfil do aluno: Nível ").append(request.level())
+        sb.append("Perfil do aluno: Nível ").append(level)
                 .append(" | Objetivo: ").append(request.goal()).append("\n");
+        sb.append("Calibração CEFR (").append(level).append("): ").append(buildCefrCalibrationDirective(level)).append("\n");
         if (request.lowDataMode()) {
             sb.append("Modo baixa conectividade ativo: seja objetivo, use frases curtas e sem texto excessivo.\n");
         }
         sb.append("Responda em português claro com exemplos práticos em inglês (entre aspas duplas), NÃO dê cola pronta sem explicação, ");
         sb.append("ancore sua explicação nos trechos da base curada abaixo e termine com um convite ativo à prática.\n\n");
+
+        LearnerState learnerState = request.learnerState();
+        if (learnerState != null && !learnerState.isEmpty()) {
+            sb.append("=== MEMÓRIA PEDAGÓGICA DO ALUNO (SESSÃO LOCAL — LGPD) ===\n");
+            if (!learnerState.weakPoints().isEmpty()) {
+                sb.append("- Pontos a reforçar (weakPoints): ").append(String.join("; ", learnerState.weakPoints())).append("\n");
+            }
+            if (!learnerState.masteredTopics().isEmpty()) {
+                sb.append("- Tópicos já dominados (masteredTopics): ").append(String.join("; ", learnerState.masteredTopics())).append("\n");
+            }
+            if (!learnerState.recentTopics().isEmpty()) {
+                sb.append("- Tópicos recentes estudados: ").append(String.join("; ", learnerState.recentTopics())).append("\n");
+            }
+            if (learnerState.quizAccuracyPercent() != null) {
+                sb.append("- Precisão atual no Quiz: ").append(learnerState.quizAccuracyPercent()).append("%\n");
+            }
+            sb.append("DIRETRIZ DE CONTINUIDADE PEDAGÓGICA: Conecte a explicação ao perfil acima — reforce pontos fracos recorrentes quando relevante e avance sem repetir conceitos já dominados.\n\n");
+        }
+
+        String fewShot = buildFewShotExamples(level, request.lowDataMode());
+        if (fewShot != null && !fewShot.isBlank()) {
+            sb.append("=== EXEMPLOS CALIBRADOS (FEW-SHOT · SKILL ")
+                    .append(definition.id().toUpperCase(Locale.ROOT))
+                    .append(" · NÍVEL ").append(level).append(") ===\n");
+            sb.append(fewShot.trim()).append("\n\n");
+        }
 
         if (request.history() != null && !request.history().isEmpty()) {
             sb.append("=== MEMÓRIA DE CONVERSA (ÚLTIMOS TURNOS) ===\n");
@@ -83,6 +113,47 @@ public abstract class AbstractTeacherSkill implements TeacherSkill {
         return sb.toString();
     }
 
+    protected static String normalizeCefrLevel(String rawLevel) {
+        if (rawLevel == null || rawLevel.isBlank()) {
+            return "A2";
+        }
+        String up = rawLevel.trim().toUpperCase(Locale.ROOT);
+        return switch (up) {
+            case "A1", "A2", "B1", "B2" -> up;
+            default -> "A2";
+        };
+    }
+
+    protected String buildCefrCalibrationDirective(String level) {
+        return switch (level) {
+            case "A1" -> "Use frases muito curtas, 1 regra por vez, vocabulário básico de sobrevivência e tradução clara dos termos em inglês.";
+            case "B1" -> "Conecte vocabulário técnico real (Microsoft Learn, APIs, verbos modais must/should/may) com explicações objetivas e exemplos de trabalho.";
+            case "B2" -> "Adote tom profissional de engenharia (daily, code review, arquitetura e nuances de precisão), estimulando argumentação autônoma em inglês.";
+            default -> "Combine frases cotidianas no presente/passado com contraste direto de falsos cognatos para brasileiros e exemplos curtos aplicáveis.";
+        };
+    }
+
+    protected String buildFewShotExamples(String level, boolean lowDataMode) {
+        return switch (level) {
+            case "A1" -> """
+                    Entrada: "Como digo minha idade em inglês?"
+                    Resposta ideal: Em inglês, idade usa o verbo **to be** (e não *have*). Exemplo: "I am 20 years old." Agora tente escrever uma frase curta dizendo sua idade e o que você estuda!
+                    """;
+            case "B1" -> """
+                    Entrada: "Qual a diferença entre must e should na documentação?"
+                    Resposta ideal: Em manuais técnicos, **must** indica requisito obrigatório (sem isso falha) e **should** indica boa prática recomendada. Exemplo: "You must set JAVA_HOME, and you should enable logs." Como você reescreveria uma regra do seu projeto usando **must**?
+                    """;
+            case "B2" -> """
+                    Entrada: "Como explicar um atraso na daily sem soar vago?"
+                    Resposta ideal: Estruture em **progresso + bloqueio + próximo passo**. Exemplo: "Yesterday I implemented the endpoint, but I am blocked by missing staging credentials; today I will pair with DevOps to unblock it." Tente adaptar essa estrutura para uma tarefa real sua!
+                    """;
+            default -> """
+                    Entrada: "Actually significa atualmente?"
+                    Resposta ideal: Não! **Actually** é um falso cognato e significa **na verdade**. Para "atualmente", use **currently**. Exemplo: "Actually, I currently study Java at night." Crie uma frase curta usando **actually**!
+                    """;
+        };
+    }
+
     protected String formatGroundedLocalReply(
             ChatRequest request,
             List<KnowledgeChunk> chunks,
@@ -115,6 +186,19 @@ public abstract class AbstractTeacherSkill implements TeacherSkill {
         }
 
         sb.append("**Orientação da Skill (`").append(definition.name()).append("`):** ").append(coachingTip);
+
+        LearnerState learnerState = request.learnerState();
+        if (learnerState != null && !learnerState.isEmpty() && !request.lowDataMode()) {
+            if (!learnerState.weakPoints().isEmpty()) {
+                sb.append("\n\n**Continuidade da sua sessão (LGPD local):** mantenha atenção especial em *")
+                        .append(String.join(", ", learnerState.weakPoints().subList(0, Math.min(2, learnerState.weakPoints().size()))))
+                        .append("*.");
+            } else if (!learnerState.masteredTopics().isEmpty()) {
+                sb.append("\n\n**Continuidade da sua sessão (LGPD local):** ótimo avanço nos tópicos já dominados (*")
+                        .append(String.join(", ", learnerState.masteredTopics().subList(0, Math.min(2, learnerState.masteredTopics().size()))))
+                        .append("*).");
+            }
+        }
         return sb.toString().trim();
     }
 

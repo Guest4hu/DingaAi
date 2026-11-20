@@ -5,8 +5,11 @@ import br.edu.usjt.dinga.model.ChatRequest;
 import br.edu.usjt.dinga.model.ChatResponse;
 import br.edu.usjt.dinga.model.ChatTurn;
 import br.edu.usjt.dinga.model.KnowledgeChunk;
+import br.edu.usjt.dinga.model.LearnerState;
+import br.edu.usjt.dinga.model.LearnerStateDelta;
 import br.edu.usjt.dinga.model.MtgMetadata;
 import br.edu.usjt.dinga.rag.Bm25RagRetriever;
+import br.edu.usjt.dinga.skills.PraticaAtivaSkill;
 import br.edu.usjt.dinga.skills.SkillRouter;
 import br.edu.usjt.dinga.skills.TeacherSkill;
 import java.nio.charset.StandardCharsets;
@@ -34,14 +37,15 @@ import org.springframework.stereotype.Service;
 public class DingaTutorService {
 
     private static final DateTimeFormatter WATERMARK_DATE = DateTimeFormatter.BASIC_ISO_DATE;
-    private static final Pattern QUOTED_PHRASE = Pattern.compile("\"([^\"]{4,160})\"|'([^']{4,160})'");
+    private static final Pattern AVOID_SEGMENT = Pattern.compile("❌[^✅\\n]*");
+    private static final Pattern QUOTED_PHRASE = Pattern.compile("\"([^\"\\n]{4,160})\"|'([^'\\n]{4,160})'");
     private static final Pattern PT_DIACRITICS = Pattern.compile("[ãõçáéíóúâêôà]", Pattern.CASE_INSENSITIVE);
     private static final Pattern PT_WORDS = Pattern.compile(
             "\\b(nao|voce|atualmente|na verdade|livraria|pretender|parentes|atender|suportar|aguentar|tenho|anos|fazer uma pergunta|sugere|valida|assistir|cliente|incontavel|significa|diferenca|ontem|hoje)\\b",
             Pattern.CASE_INSENSITIVE
     );
     private static final Pattern EN_WORDS = Pattern.compile(
-            "\\b(i|you|he|she|it|we|they|am|is|are|was|were|do|does|did|have|has|will|would|could|should|can|must|the|in|on|at|to|for|with|from|yesterday|today|actually|currently|nowadays|pretend|intend|library|attend|support|parents|study|studied|worked|work|learning|student|question|information|feedback|blocker|endpoint|payload|grounding|hallucination|push|pull|daily|api|review|documentation|null|exception|error|branch|commit)\\b",
+            "\\b(i|you|he|she|it|we|they|am|is|are|was|were|do|does|did|have|has|will|would|could|should|can|must|the|and|but|while|before|after|under|through|every|more|than|without|in|on|at|to|for|with|from|into|yesterday|today|actually|currently|nowadays|pretend|intend|library|attend|support|parents|study|studied|worked|work|learning|student|students|question|information|feedback|blocker|endpoint|payload|grounding|hallucination|push|pull|daily|api|review|documentation|null|exception|error|branch|commit|avoid|remove|means|includes|supports|reduces|builds|turns|produce|beats|models|answers|sources|practice|safety)\\b",
             Pattern.CASE_INSENSITIVE
     );
 
@@ -107,13 +111,17 @@ public class DingaTutorService {
         // 1. Guardrail LGPD: mascara CPF, e-mail e telefone ANTES de qualquer chamada a LLM ou RAG
         PiiSanitizationResult sanitizedMsg = sanitizePii(request.message());
         List<ChatTurn> sanitizedHistory = sanitizeHistory(request.history());
+        LearnerState sanitizedLearnerState = request.learnerState() == null
+                ? LearnerState.empty()
+                : request.learnerState().sanitized(text -> sanitizePii(text).sanitizedText());
         ChatRequest safeRequest = new ChatRequest(
                 sanitizedMsg.sanitizedText(),
                 request.level(),
                 request.goal(),
                 request.preferredSkill(),
                 request.lowDataMode(),
-                sanitizedHistory
+                sanitizedHistory,
+                sanitizedLearnerState
         );
 
         boolean piiMasked = sanitizedMsg.anyMasked();
@@ -134,35 +142,48 @@ public class DingaTutorService {
         SkillRouter.RoutingDecision decision = skillRouter.route(safeRequest);
         TeacherSkill skill = decision.skill();
 
-        List<KnowledgeChunk> initialSources = ragRetriever.retrieve(safeRequest.message(), safeRequest.level(), 3);
-        if (initialSources.isEmpty() && safeRequest.lastTurn().isPresent()) {
-            ChatTurn last = safeRequest.lastTurn().get();
-            String contextualQuery = safeRequest.message() + " " + last.question() + " " + last.practicePrompt();
-            initialSources = ragRetriever.retrieve(contextualQuery, safeRequest.level(), 3);
-        }
-        final List<KnowledgeChunk> sources = initialSources;
+        final List<KnowledgeChunk> sources = ragRetriever.retrieve(
+                safeRequest.message(),
+                safeRequest.level(),
+                3,
+                safeRequest.history(),
+                safeRequest.lowDataMode()
+        );
 
         String systemPrompt = skill.buildSystemPrompt(safeRequest, sources);
+        HybridLlmClient.GenerationOptions decodingOptions = skill.generationOptions();
 
         if (streaming && piiMasked) {
             onToken.accept(piiNotice + "\n\n");
         }
 
-        Optional<HybridLlmClient.LlmResult> remoteResult = streaming
-                ? llmClient.streamGenerate(systemPrompt, safeRequest.message(), safeRequest.history(), onToken)
-                : llmClient.generate(systemPrompt, safeRequest.message(), safeRequest.history());
-
-        String rawReply;
-        if (remoteResult.isPresent()) {
-            rawReply = remoteResult.get().text();
+        Optional<HybridLlmClient.LlmResult> remoteResult;
+        PiiSafeStreamConsumer safeStreamConsumer = streaming ? new PiiSafeStreamConsumer(onToken) : null;
+        if (streaming) {
+            remoteResult = llmClient.supportsGenerationOptions()
+                    ? llmClient.streamGenerate(systemPrompt, safeRequest.message(), safeRequest.history(), decodingOptions, safeStreamConsumer)
+                    : llmClient.streamGenerate(systemPrompt, safeRequest.message(), safeRequest.history(), safeStreamConsumer);
+            safeStreamConsumer.flush();
         } else {
-            rawReply = skill.buildLocalResponse(safeRequest, sources);
-            if (streaming) {
-                emitChunked(rawReply, onToken);
-            }
+            remoteResult = llmClient.supportsGenerationOptions()
+                    ? llmClient.generate(systemPrompt, safeRequest.message(), safeRequest.history(), decodingOptions)
+                    : llmClient.generate(systemPrompt, safeRequest.message(), safeRequest.history());
         }
 
-        String reply = piiMasked ? piiNotice + "\n\n" + rawReply : rawReply;
+        String rawReply = remoteResult.isPresent()
+                ? remoteResult.get().text()
+                : skill.buildLocalResponse(safeRequest, sources);
+
+        // 4. Verificador Pós-Geração (0 ms): ancoragem RAG (groundednessScore) + checagem de saída LGPD/PII
+        GroundednessVerifier.VerificationResult verification = GroundednessVerifier.verify(rawReply, sources);
+        String verifiedReply = verification.sanitizedReply();
+        boolean effectivePiiMasked = piiMasked || verification.outputPiiMasked();
+
+        if (streaming && remoteResult.isEmpty()) {
+            emitChunked(verifiedReply, onToken);
+        }
+
+        String reply = piiMasked ? piiNotice + "\n\n" + verifiedReply : verifiedReply;
 
         String executionMode = remoteResult
                 .map(res -> "IA Generativa + RAG (" + res.providerLabel() + ")")
@@ -170,15 +191,27 @@ public class DingaTutorService {
 
         String practicePrompt = skill.buildPracticePrompt(safeRequest, sources);
         List<String> englishExamples = extractEnglishExamples(reply, sources);
+        LearnerStateDelta learnerStateDelta = computeLearnerStateDelta(safeRequest, verifiedReply, sources, skill);
 
         long elapsedMs = Math.max(1L, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos));
         double payloadSizeKb = estimatePayloadSizeKb(reply, practicePrompt, sources);
         int bandwidthSavedPercent = safeRequest.lowDataMode() ? 97 : 92;
 
-        String privacyNote = piiMasked
-                ? "LGPD Ativa: dados pessoais (" + String.join(", ", sanitizedMsg.maskedTypes())
-                        + ") foram detectados e mascarados automaticamente antes do processamento."
-                : "LGPD: nenhum dado pessoal sensível ou histórico de conversa é persistido no servidor.";
+        String privacyNote;
+        if (piiMasked && verification.outputPiiMasked()) {
+            Set<String> allMaskedTypes = new LinkedHashSet<>(sanitizedMsg.maskedTypes());
+            allMaskedTypes.addAll(verification.outputMaskedTypes());
+            privacyNote = "LGPD Ativa (Entrada + Saída): dados pessoais (" + String.join(", ", allMaskedTypes)
+                    + ") mascarados na entrada e saída verificada automaticamente.";
+        } else if (piiMasked) {
+            privacyNote = "LGPD Ativa: dados pessoais (" + String.join(", ", sanitizedMsg.maskedTypes())
+                    + ") foram detectados e mascarados automaticamente antes do processamento.";
+        } else if (verification.outputPiiMasked()) {
+            privacyNote = "LGPD Ativa (Saída): dados pessoais (" + String.join(", ", verification.outputMaskedTypes())
+                    + ") detectados na saída foram mascarados automaticamente pós-geração.";
+        } else {
+            privacyNote = "LGPD: nenhum dado pessoal sensível ou histórico de conversa é persistido no servidor.";
+        }
 
         MtgMetadata mtg = new MtgMetadata(
                 "Conteúdo gerado/assistido por IA — Dinga AI",
@@ -191,8 +224,9 @@ public class DingaTutorService {
                 payloadSizeKb,
                 bandwidthSavedPercent,
                 safeRequest.lowDataMode(),
-                piiMasked,
-                false
+                effectivePiiMasked,
+                false,
+                verification.groundednessScore()
         );
 
         if (metricsService != null) {
@@ -200,7 +234,7 @@ public class DingaTutorService {
                     skill.definition().id(),
                     safeRequest.lowDataMode(),
                     payloadSizeKb,
-                    piiMasked,
+                    effectivePiiMasked,
                     false
             );
         }
@@ -212,7 +246,8 @@ public class DingaTutorService {
                 sources,
                 practicePrompt,
                 mtg,
-                englishExamples
+                englishExamples,
+                learnerStateDelta
         );
     }
 
@@ -277,6 +312,7 @@ public class DingaTutorService {
                         + ") mascarados e solicitação redirecionada para orientação socrática."
                 : "MTG-IA Ativo: solicitação de resposta pronta para copiar foi redirecionada para tutoria socrática passo a passo.";
 
+        double antiPlagiarismGroundedness = GroundednessVerifier.computeGroundednessScore(reply.toString(), sources);
         MtgMetadata mtg = new MtgMetadata(
                 "Conteúdo assistido por IA com Guardrail MTG-IA — Dinga AI",
                 generateWatermarkId(),
@@ -289,7 +325,8 @@ public class DingaTutorService {
                 bandwidthSavedPercent,
                 safeRequest.lowDataMode(),
                 piiMasked,
-                true
+                true,
+                antiPlagiarismGroundedness
         );
 
         if (metricsService != null) {
@@ -422,7 +459,9 @@ public class DingaTutorService {
         if (text == null || text.isBlank()) {
             return;
         }
-        Matcher matcher = QUOTED_PHRASE.matcher(text);
+        // Remove segmentos "❌ Evite: ..." antes de extrair exemplos para nunca sugerir frases erradas nos chips 🔊 ou Quiz
+        String sanitized = AVOID_SEGMENT.matcher(text).replaceAll("");
+        Matcher matcher = QUOTED_PHRASE.matcher(sanitized);
         while (matcher.find()) {
             String candidate = matcher.group(1) != null ? matcher.group(1) : matcher.group(2);
             if (candidate == null) {
@@ -465,6 +504,124 @@ public class DingaTutorService {
         bytes += 380;
         double kb = bytes / 1024.0;
         return Math.max(0.25, Math.round(kb * 100.0) / 100.0);
+    }
+
+    private static LearnerStateDelta computeLearnerStateDelta(
+            ChatRequest safeRequest,
+            String reply,
+            List<KnowledgeChunk> sources,
+            TeacherSkill skill
+    ) {
+        Set<String> weakPoints = new LinkedHashSet<>();
+        Set<String> mastered = new LinkedHashSet<>();
+
+        PraticaAtivaSkill.GrammarAnalysis grammar = PraticaAtivaSkill.analyzeBrazilianPatterns(safeRequest.message());
+        for (PraticaAtivaSkill.GrammarIssue issue : grammar.issues()) {
+            if (issue.title() != null && !issue.title().isBlank()) {
+                weakPoints.add(issue.title());
+            }
+        }
+
+        String focusTopic = (sources != null && !sources.isEmpty())
+                ? sources.getFirst().section()
+                : skill.definition().name();
+
+        boolean hadPreviousChallenge = safeRequest.lastTurn()
+                .map(turn -> turn.practicePrompt() != null && !turn.practicePrompt().isBlank())
+                .orElse(false);
+        String msg = safeRequest.message().trim();
+        String normMsg = Bm25RagRetriever.normalizeText(msg);
+        boolean looksLikeStandaloneQuestion = msg.endsWith("?")
+                && (normMsg.startsWith("qual ") || normMsg.startsWith("o que ") || normMsg.startsWith("como ")
+                || normMsg.startsWith("onde ") || normMsg.startsWith("quais ") || normMsg.startsWith("por que "))
+                && !normMsg.contains("certo") && !normMsg.contains("correto") && !normMsg.contains("acertei");
+
+        boolean isMicroChallengeEvaluation = reply != null && (
+                reply.contains("Avaliação do seu Micro-desafio")
+                        || (hadPreviousChallenge && !looksLikeStandaloneQuestion)
+        );
+
+        if (isMicroChallengeEvaluation) {
+            String normReply = Bm25RagRetriever.normalizeText(reply);
+            boolean hasPositiveCue = normReply.contains("excelente")
+                    || normReply.contains("muito bem")
+                    || normReply.contains("resposta certeira")
+                    || normReply.contains("parabens")
+                    || normReply.contains("corretamente")
+                    || normReply.contains("mandou bem")
+                    || normReply.contains("perfeito");
+            boolean hasCorrectiveCue = normReply.contains("quase la")
+                    || normReply.contains("ajuste apenas")
+                    || normReply.contains("correcao gramatical")
+                    || normReply.contains("correcao sugerida")
+                    || normReply.contains("o que ajustar");
+
+            if (hasPositiveCue && !hasCorrectiveCue && weakPoints.isEmpty()) {
+                mastered.add(focusTopic);
+            } else if (hasCorrectiveCue) {
+                weakPoints.add(focusTopic);
+            }
+        }
+
+        return new LearnerStateDelta(List.copyOf(weakPoints), List.copyOf(mastered), focusTopic);
+    }
+
+    /**
+     * Buffer deslizante LGPD para streaming SSE: retém uma pequena cauda até fronteira segura
+     * para mascarar CPF, e-mail ou telefone mesmo quando divididos entre dois chunks consecutivos.
+     */
+    private static final class PiiSafeStreamConsumer implements Consumer<String> {
+        private static final int TAIL_GUARD_CHARS = 40;
+        private final Consumer<String> downstream;
+        private final StringBuilder pending = new StringBuilder();
+
+        PiiSafeStreamConsumer(Consumer<String> downstream) {
+            this.downstream = downstream;
+        }
+
+        @Override
+        public void accept(String delta) {
+            if (delta == null || delta.isEmpty()) {
+                return;
+            }
+            pending.append(delta);
+            if (pending.length() <= TAIL_GUARD_CHARS) {
+                return;
+            }
+            int safeLimit = pending.length() - TAIL_GUARD_CHARS;
+            int splitIdx = findSafeWhitespaceBoundary(pending, safeLimit);
+            if (splitIdx <= 0) {
+                return;
+            }
+            String candidate = pending.substring(0, splitIdx);
+            pending.delete(0, splitIdx);
+            emitSanitized(candidate);
+        }
+
+        void flush() {
+            if (pending.isEmpty()) {
+                return;
+            }
+            String remaining = pending.toString();
+            pending.setLength(0);
+            emitSanitized(remaining);
+        }
+
+        private void emitSanitized(String chunk) {
+            String safe = sanitizePii(chunk).sanitizedText();
+            if (!safe.isEmpty() && downstream != null) {
+                downstream.accept(safe);
+            }
+        }
+
+        private static int findSafeWhitespaceBoundary(StringBuilder sb, int maxEnd) {
+            for (int i = Math.min(maxEnd, sb.length()) - 1; i >= 0; i--) {
+                if (Character.isWhitespace(sb.charAt(i))) {
+                    return i + 1;
+                }
+            }
+            return -1;
+        }
     }
 
     private static String generateWatermarkId() {

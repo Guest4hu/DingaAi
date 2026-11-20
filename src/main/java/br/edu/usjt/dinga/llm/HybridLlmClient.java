@@ -17,6 +17,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
@@ -40,6 +41,9 @@ public class HybridLlmClient {
     private static final Duration STREAM_TIMEOUT = Duration.ofSeconds(25);
     private static final int MAX_CACHE_ENTRIES = 128;
     private static final long CACHE_TTL_MS = 10 * 60 * 1000L;
+    private static final long COOLDOWN_NOT_FOUND_MS = 10 * 60 * 1000L;
+    private static final long COOLDOWN_TRANSIENT_MS = 30 * 1000L;
+    private static final int MAX_HISTORY_REPLY_CHARS = 450;
     private static final List<String> GEMINI_FLASH_FALLBACK_CHAIN = List.of(
             "gemini-3.8-flash",
             "gemini-3.8-flash-lite",
@@ -51,6 +55,7 @@ public class HybridLlmClient {
     private final LlmProperties properties;
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
+    private final ConcurrentHashMap<String, Long> modelCooldownUntilMs = new ConcurrentHashMap<>();
     private final Map<String, CachedEntry> responseCache = Collections.synchronizedMap(
             new LinkedHashMap<>(MAX_CACHE_ENTRIES + 1, 0.75f, true) {
                 @Override
@@ -68,7 +73,8 @@ public class HybridLlmClient {
                 properties,
                 objectMapper,
                 HttpClient.newBuilder()
-                        .connectTimeout(Duration.ofSeconds(6))
+                        .version(HttpClient.Version.HTTP_2)
+                        .connectTimeout(Duration.ofSeconds(4))
                         .build()
         );
     }
@@ -92,24 +98,42 @@ public class HybridLlmClient {
         return List.copyOf(modelsToTry);
     }
 
+    public boolean supportsGenerationOptions() {
+        return true;
+    }
+
     public Optional<LlmResult> generate(String systemPrompt, String userMessage) {
-        return generate(systemPrompt, userMessage, List.of());
+        return generate(systemPrompt, userMessage, List.of(), GenerationOptions.defaults());
+    }
+
+    public Optional<LlmResult> generate(String systemPrompt, String userMessage, GenerationOptions options) {
+        return generate(systemPrompt, userMessage, List.of(), options);
     }
 
     public Optional<LlmResult> generate(String systemPrompt, String userMessage, List<ChatTurn> history) {
+        return generate(systemPrompt, userMessage, history, GenerationOptions.defaults());
+    }
+
+    public Optional<LlmResult> generate(
+            String systemPrompt,
+            String userMessage,
+            List<ChatTurn> history,
+            GenerationOptions options
+    ) {
         String resolved = properties.resolvedProviderName();
         if ("local".equals(resolved)) {
             return Optional.empty();
         }
 
+        GenerationOptions effectiveOptions = options == null ? GenerationOptions.defaults() : options;
         List<ChatTurn> recentTurns = sliceRecentTurns(history);
-        String cacheKey = buildCacheKey(resolved, systemPrompt, userMessage, recentTurns);
+        String cacheKey = buildCacheKey(resolved, systemPrompt, userMessage, recentTurns, effectiveOptions);
         Optional<LlmResult> cached = getCached(cacheKey);
         if (cached.isPresent()) {
             return cached;
         }
 
-        Optional<LlmResult> result = invokeProvider(resolved, systemPrompt, userMessage, recentTurns);
+        Optional<LlmResult> result = invokeProvider(resolved, systemPrompt, userMessage, recentTurns, effectiveOptions);
         result.ifPresent(r -> putCached(cacheKey, r));
         return result;
     }
@@ -118,11 +142,12 @@ public class HybridLlmClient {
             String resolved,
             String systemPrompt,
             String userMessage,
-            List<ChatTurn> recentTurns
+            List<ChatTurn> recentTurns,
+            GenerationOptions options
     ) {
         try {
             if (resolved.startsWith("Gemini")) {
-                return callGemini(systemPrompt, userMessage, recentTurns, resolved);
+                return callGemini(systemPrompt, userMessage, recentTurns, resolved, options);
             } else if (resolved.startsWith("Groq")) {
                 return callOpenAiCompatible(
                         "https://api.groq.com/openai/v1/chat/completions",
@@ -131,7 +156,8 @@ public class HybridLlmClient {
                         systemPrompt,
                         userMessage,
                         recentTurns,
-                        resolved
+                        resolved,
+                        options
                 );
             } else if (resolved.startsWith("OpenAI")) {
                 String base = properties.openaiBaseUrl().replaceAll("/+$", "");
@@ -142,10 +168,11 @@ public class HybridLlmClient {
                         systemPrompt,
                         userMessage,
                         recentTurns,
-                        resolved
+                        resolved,
+                        options
                 );
             } else if (resolved.startsWith("Ollama")) {
-                return callOllama(systemPrompt, userMessage, recentTurns, resolved);
+                return callOllama(systemPrompt, userMessage, recentTurns, resolved, options);
             }
         } catch (Exception ex) {
             log.warn("Falha ao chamar provedor LLM ({}); aplicando fallback RAG Local: {}", resolved, ex.getMessage());
@@ -162,13 +189,24 @@ public class HybridLlmClient {
             List<ChatTurn> history,
             Consumer<String> onToken
     ) {
+        return streamGenerate(systemPrompt, userMessage, history, GenerationOptions.defaults(), onToken);
+    }
+
+    public Optional<LlmResult> streamGenerate(
+            String systemPrompt,
+            String userMessage,
+            List<ChatTurn> history,
+            GenerationOptions options,
+            Consumer<String> onToken
+    ) {
         String resolved = properties.resolvedProviderName();
         if ("local".equals(resolved)) {
             return Optional.empty();
         }
 
+        GenerationOptions effectiveOptions = options == null ? GenerationOptions.defaults() : options;
         List<ChatTurn> recentTurns = sliceRecentTurns(history);
-        String cacheKey = buildCacheKey(resolved, systemPrompt, userMessage, recentTurns);
+        String cacheKey = buildCacheKey(resolved, systemPrompt, userMessage, recentTurns, effectiveOptions);
         Optional<LlmResult> cached = getCached(cacheKey);
         if (cached.isPresent()) {
             if (onToken != null) {
@@ -179,7 +217,9 @@ public class HybridLlmClient {
 
         if (resolved.startsWith("Gemini")) {
             try {
-                Optional<StreamOutcome> streamed = callGeminiStream(systemPrompt, userMessage, recentTurns, resolved, onToken);
+                Optional<StreamOutcome> streamed = callGeminiStream(
+                        systemPrompt, userMessage, recentTurns, resolved, effectiveOptions, onToken
+                );
                 if (streamed.isPresent()) {
                     StreamOutcome outcome = streamed.get();
                     if (outcome.complete()) {
@@ -194,7 +234,7 @@ public class HybridLlmClient {
             }
         }
 
-        Optional<LlmResult> result = invokeProvider(resolved, systemPrompt, userMessage, recentTurns);
+        Optional<LlmResult> result = invokeProvider(resolved, systemPrompt, userMessage, recentTurns, effectiveOptions);
         if (result.isPresent()) {
             putCached(cacheKey, result.get());
             if (onToken != null) {
@@ -253,10 +293,16 @@ public class HybridLlmClient {
             String resolvedProvider,
             String systemPrompt,
             String userMessage,
-            List<ChatTurn> recentTurns
+            List<ChatTurn> recentTurns,
+            GenerationOptions options
     ) {
         StringBuilder sb = new StringBuilder(256);
         sb.append(resolvedProvider).append('|')
+                .append(options.temperature()).append('|')
+                .append(options.topP()).append('|')
+                .append(options.maxOutputTokens()).append('|')
+                .append(options.responseMimeType() == null ? "" : options.responseMimeType()).append('|')
+                .append(options.hasStructuredSchema() ? options.responseSchema().toString() : "").append('|')
                 .append(systemPrompt == null ? "" : systemPrompt).append('|')
                 .append(userMessage == null ? "" : userMessage);
         for (ChatTurn turn : recentTurns) {
@@ -273,23 +319,63 @@ public class HybridLlmClient {
         }
     }
 
+    public boolean isModelOnCooldown(String model) {
+        Long until = modelCooldownUntilMs.get(model);
+        if (until == null) {
+            return false;
+        }
+        if (System.currentTimeMillis() >= until) {
+            modelCooldownUntilMs.remove(model);
+            return false;
+        }
+        return true;
+    }
+
+    private void markModelCooldown(String model, int statusCode) {
+        if (statusCode == 404) {
+            modelCooldownUntilMs.put(model, System.currentTimeMillis() + COOLDOWN_NOT_FOUND_MS);
+        } else if (statusCode == 429 || statusCode == 500 || statusCode == 502 || statusCode == 503 || statusCode == 504) {
+            modelCooldownUntilMs.put(model, System.currentTimeMillis() + COOLDOWN_TRANSIENT_MS);
+        }
+    }
+
+    private List<String> activeGeminiModels() {
+        List<String> all = candidateGeminiModels();
+        List<String> healthy = new ArrayList<>(all.size());
+        for (String model : all) {
+            if (!isModelOnCooldown(model)) {
+                healthy.add(model);
+            }
+        }
+        // Se todos estiverem em cooldown, tenta a lista completa como rede de segurança
+        return healthy.isEmpty() ? all : healthy;
+    }
+
+    private static String compactText(String text, int maxChars) {
+        if (text == null || text.length() <= maxChars) {
+            return text == null ? "" : text;
+        }
+        return text.substring(0, maxChars).trim() + "…";
+    }
+
     private Map<String, Object> buildGeminiBody(
             String systemPrompt,
             String userMessage,
-            List<ChatTurn> recentTurns
+            List<ChatTurn> recentTurns,
+            GenerationOptions options
     ) {
         List<Map<String, Object>> contents = new ArrayList<>();
         for (ChatTurn turn : recentTurns) {
             if (!turn.question().isBlank()) {
                 contents.add(Map.of(
                         "role", "user",
-                        "parts", List.of(Map.of("text", turn.question()))
+                        "parts", List.of(Map.of("text", compactText(turn.question(), 300)))
                 ));
             }
             if (!turn.reply().isBlank() || !turn.practicePrompt().isBlank()) {
-                String modelText = turn.reply();
+                String modelText = compactText(turn.reply(), MAX_HISTORY_REPLY_CHARS);
                 if (!turn.practicePrompt().isBlank()) {
-                    modelText = modelText + "\n\nMicro-desafio proposto ao aluno: " + turn.practicePrompt();
+                    modelText = modelText + "\n\nMicro-desafio proposto ao aluno: " + compactText(turn.practicePrompt(), 220);
                 }
                 contents.add(Map.of(
                         "role", "model",
@@ -302,10 +388,21 @@ public class HybridLlmClient {
                 "parts", List.of(Map.of("text", userMessage))
         ));
 
+        Map<String, Object> generationConfig = new LinkedHashMap<>();
+        generationConfig.put("temperature", options.temperature());
+        generationConfig.put("topP", options.topP());
+        generationConfig.put("maxOutputTokens", options.maxOutputTokens());
+        if (options.isJsonMode()) {
+            generationConfig.put("responseMimeType", options.responseMimeType());
+            if (options.hasStructuredSchema()) {
+                generationConfig.put("responseSchema", options.responseSchema());
+            }
+        }
+
         return Map.of(
                 "systemInstruction", Map.of("parts", List.of(Map.of("text", systemPrompt))),
                 "contents", contents,
-                "generationConfig", Map.of("temperature", 0.4, "maxOutputTokens", 700)
+                "generationConfig", generationConfig
         );
     }
 
@@ -313,21 +410,39 @@ public class HybridLlmClient {
             String systemPrompt,
             String userMessage,
             List<ChatTurn> recentTurns,
-            String label
+            String label,
+            GenerationOptions options
     ) throws Exception {
-        List<String> modelsToTry = candidateGeminiModels();
-        Map<String, Object> body = buildGeminiBody(systemPrompt, userMessage, recentTurns);
+        List<String> modelsToTry = activeGeminiModels();
+        String json = objectMapper.writeValueAsString(buildGeminiBody(systemPrompt, userMessage, recentTurns, options));
+        String fallbackPlainJson = null;
         String key = URLEncoder.encode(properties.geminiApiKey(), StandardCharsets.UTF_8);
 
         for (String candidateModel : modelsToTry) {
             try {
                 String model = URLEncoder.encode(candidateModel, StandardCharsets.UTF_8);
                 String url = "https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent?key=" + key;
-                String responseBody = postJson(url, body, Map.of());
-                if (responseBody == null) {
+                HttpResponse<String> response = sendGeminiGenerateRequest(url, json);
+                int status = response.statusCode();
+
+                // Fallback seguro: se o modelo retornar HTTP 400 com responseSchema/responseMimeType, tenta uma vez sem schema
+                if (status == 400 && (options.hasStructuredSchema() || options.isJsonMode())) {
+                    log.warn("Modelo Gemini '{}' rejeitou Structured Output (HTTP 400); tentando sem responseSchema.", candidateModel);
+                    if (fallbackPlainJson == null) {
+                        fallbackPlainJson = objectMapper.writeValueAsString(
+                                buildGeminiBody(systemPrompt, userMessage, recentTurns, options.withoutStructuredSchema())
+                        );
+                    }
+                    response = sendGeminiGenerateRequest(url, fallbackPlainJson);
+                    status = response.statusCode();
+                }
+
+                if (status < 200 || status >= 300) {
+                    markModelCooldown(candidateModel, status);
+                    log.warn("Modelo Gemini '{}' retornou HTTP {}; tentando próximo modelo.", candidateModel, status);
                     continue;
                 }
-                JsonNode root = objectMapper.readTree(responseBody);
+                JsonNode root = objectMapper.readTree(response.body());
                 String text = extractGeminiPartsText(root);
                 if (!text.isBlank()) {
                     String effectiveLabel = candidateModel.equals(properties.geminiModel())
@@ -342,15 +457,26 @@ public class HybridLlmClient {
         return Optional.empty();
     }
 
+    private HttpResponse<String> sendGeminiGenerateRequest(String url, String json) throws Exception {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .timeout(REQUEST_TIMEOUT)
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(json, StandardCharsets.UTF_8))
+                .build();
+        return httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+    }
+
     private Optional<StreamOutcome> callGeminiStream(
             String systemPrompt,
             String userMessage,
             List<ChatTurn> recentTurns,
             String label,
+            GenerationOptions options,
             Consumer<String> onToken
     ) throws Exception {
-        List<String> modelsToTry = candidateGeminiModels();
-        Map<String, Object> body = buildGeminiBody(systemPrompt, userMessage, recentTurns);
+        List<String> modelsToTry = activeGeminiModels();
+        Map<String, Object> body = buildGeminiBody(systemPrompt, userMessage, recentTurns, options);
         String json = objectMapper.writeValueAsString(body);
         String key = URLEncoder.encode(properties.geminiApiKey(), StandardCharsets.UTF_8);
 
@@ -369,8 +495,10 @@ public class HybridLlmClient {
 
                 HttpResponse<Stream<String>> response = httpClient.send(request, HttpResponse.BodyHandlers.ofLines());
                 try (Stream<String> lines = response.body()) {
-                    if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                        log.warn("Streaming Gemini '{}' retornou HTTP {}; tentando próximo modelo.", candidateModel, response.statusCode());
+                    int status = response.statusCode();
+                    if (status < 200 || status >= 300) {
+                        markModelCooldown(candidateModel, status);
+                        log.warn("Streaming Gemini '{}' retornou HTTP {}; tentando próximo modelo.", candidateModel, status);
                         continue;
                     }
 
@@ -445,21 +573,32 @@ public class HybridLlmClient {
             String systemPrompt,
             String userMessage,
             List<ChatTurn> recentTurns,
-            String label
+            String label,
+            GenerationOptions options
     ) throws Exception {
         List<Map<String, String>> messages = buildOpenAiMessages(systemPrompt, userMessage, recentTurns);
-        Map<String, Object> body = Map.of(
-                "model", model,
-                "temperature", 0.4,
-                "max_tokens", 700,
-                "messages", messages
-        );
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("model", model);
+        body.put("temperature", options.temperature());
+        body.put("top_p", options.topP());
+        body.put("max_tokens", options.maxOutputTokens());
+        body.put("messages", messages);
+        if (options.isJsonMode()) {
+            body.put("response_format", Map.of("type", "json_object"));
+        }
 
-        String responseBody = postJson(endpoint, body, Map.of("Authorization", "Bearer " + apiKey));
-        if (responseBody == null) {
+        Map<String, String> headers = Map.of("Authorization", "Bearer " + apiKey);
+        HttpResponse<String> response = sendJsonRequest(endpoint, body, headers);
+        if (response.statusCode() == 400 && options.isJsonMode()) {
+            log.warn("Provedor '{}' rejeitou response_format json_object (HTTP 400); tentando sem response_format.", label);
+            body.remove("response_format");
+            response = sendJsonRequest(endpoint, body, headers);
+        }
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            log.warn("Provedor LLM retornou status HTTP {}; usando fallback RAG Local.", response.statusCode());
             return Optional.empty();
         }
-        JsonNode root = objectMapper.readTree(responseBody);
+        JsonNode root = objectMapper.readTree(response.body());
         String text = root.path("choices").path(0).path("message").path("content").asString("");
         return text.isBlank() ? Optional.empty() : Optional.of(new LlmResult(text.trim(), label));
     }
@@ -468,21 +607,34 @@ public class HybridLlmClient {
             String systemPrompt,
             String userMessage,
             List<ChatTurn> recentTurns,
-            String label
+            String label,
+            GenerationOptions options
     ) throws Exception {
         String base = properties.ollamaUrl().replaceAll("/+$", "");
         List<Map<String, String>> messages = buildOpenAiMessages(systemPrompt, userMessage, recentTurns);
-        Map<String, Object> body = Map.of(
-                "model", properties.ollamaModel(),
-                "stream", false,
-                "messages", messages
-        );
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("model", properties.ollamaModel());
+        body.put("stream", false);
+        body.put("messages", messages);
+        body.put("options", Map.of(
+                "temperature", options.temperature(),
+                "top_p", options.topP()
+        ));
+        if (options.isJsonMode()) {
+            body.put("format", "json");
+        }
 
-        String responseBody = postJson(base + "/api/chat", body, Map.of());
-        if (responseBody == null) {
+        HttpResponse<String> response = sendJsonRequest(base + "/api/chat", body, Map.of());
+        if (response.statusCode() == 400 && options.isJsonMode()) {
+            log.warn("Ollama rejeitou format=json (HTTP 400); tentando sem format.", label);
+            body.remove("format");
+            response = sendJsonRequest(base + "/api/chat", body, Map.of());
+        }
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            log.warn("Provedor LLM retornou status HTTP {}; usando fallback RAG Local.", response.statusCode());
             return Optional.empty();
         }
-        JsonNode root = objectMapper.readTree(responseBody);
+        JsonNode root = objectMapper.readTree(response.body());
         String text = root.path("message").path("content").asString("");
         return text.isBlank() ? Optional.empty() : Optional.of(new LlmResult(text.trim(), label));
     }
@@ -510,7 +662,7 @@ public class HybridLlmClient {
         return messages;
     }
 
-    private String postJson(String url, Object payload, Map<String, String> extraHeaders) throws Exception {
+    private HttpResponse<String> sendJsonRequest(String url, Object payload, Map<String, String> extraHeaders) throws Exception {
         String json = objectMapper.writeValueAsString(payload);
         HttpRequest.Builder builder = HttpRequest.newBuilder()
                 .uri(URI.create(url))
@@ -519,18 +671,62 @@ public class HybridLlmClient {
                 .POST(HttpRequest.BodyPublishers.ofString(json, StandardCharsets.UTF_8));
         extraHeaders.forEach(builder::header);
 
-        HttpResponse<String> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-        if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            log.warn("Provedor LLM retornou status HTTP {}; usando fallback RAG Local.", response.statusCode());
-            return null;
-        }
-        return response.body();
+        return httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
     }
 
     private record StreamOutcome(LlmResult result, boolean complete) {
     }
 
     private record CachedEntry(LlmResult result, long expiresAtMs) {
+    }
+
+    public record GenerationOptions(
+            double temperature,
+            double topP,
+            int maxOutputTokens,
+            String responseMimeType,
+            Map<String, Object> responseSchema
+    ) {
+        public GenerationOptions {
+            temperature = Math.max(0.0, Math.min(1.5, temperature));
+            topP = Math.max(0.1, Math.min(1.0, topP));
+            maxOutputTokens = Math.max(64, Math.min(2048, maxOutputTokens));
+            responseMimeType = (responseMimeType == null || responseMimeType.isBlank()) ? null : responseMimeType.trim();
+            responseSchema = (responseSchema == null || responseSchema.isEmpty()) ? null : responseSchema;
+        }
+
+        public static GenerationOptions defaults() {
+            return new GenerationOptions(0.35, 0.90, 650, null, null);
+        }
+
+        public static GenerationOptions of(double temperature, double topP) {
+            return new GenerationOptions(temperature, topP, 650, null, null);
+        }
+
+        public static GenerationOptions of(double temperature, double topP, int maxOutputTokens) {
+            return new GenerationOptions(temperature, topP, maxOutputTokens, null, null);
+        }
+
+        public static GenerationOptions structuredJson(
+                double temperature,
+                double topP,
+                int maxOutputTokens,
+                Map<String, Object> responseSchema
+        ) {
+            return new GenerationOptions(temperature, topP, maxOutputTokens, "application/json", responseSchema);
+        }
+
+        public boolean isJsonMode() {
+            return "application/json".equalsIgnoreCase(responseMimeType);
+        }
+
+        public boolean hasStructuredSchema() {
+            return responseSchema != null && !responseSchema.isEmpty();
+        }
+
+        public GenerationOptions withoutStructuredSchema() {
+            return new GenerationOptions(temperature, topP, maxOutputTokens, null, null);
+        }
     }
 
     public record LlmResult(String text, String providerLabel) {
